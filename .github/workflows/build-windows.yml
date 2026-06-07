@@ -1,0 +1,114 @@
+# ═══════════════════════════════════════════════════════
+# 🌊 Pacific CLI — Build Windows .exe + .msix Package
+# ═══════════════════════════════════════════════════════
+#
+# Triggered on push to main or manual dispatch.
+# Runs on a cloud-hosted Windows runner (free with GitHub).
+#
+# Flow:
+#   1. Checkout code
+#   2. Install Python 3.11 + dependencies
+#   3. PyInstaller → pacific.exe (single standalone binary)
+#   4. Assemble MSIX layout (exe + manifest + placeholder assets)
+#   5. MakeAppx.exe → pacific-cli.msix
+#   6. Upload .msix as GitHub Actions artifact
+#
+# After download: submit the .msix to Microsoft Partner Center.
+
+name: Build Pacific CLI for Windows
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:  # Manual trigger from GitHub UI
+
+jobs:
+  build-windows-msix:
+    runs-on: windows-latest
+
+    steps:
+      # ── 1. Pull code ──
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Python setup ──
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      # ── 3. Install dependencies ──
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests python-dotenv winsdk pyinstaller
+
+      # ── 4. Compile to standalone .exe ──
+      - name: Build pacific.exe with PyInstaller
+        working-directory: cli
+        run: |
+          pyinstaller ^
+            --onefile ^
+            --name pacific ^
+            --console ^
+            --collect-all pacific_cli ^
+            pacific_cli\__main__.py
+
+      # ── 5. Verify the build ──
+      - name: Verify executable
+        working-directory: cli
+        run: |
+          dir dist\pacific.exe
+          dist\pacific.exe --version
+
+      # ── 6. Assemble MSIX package layout ──
+      - name: Create MSIX layout
+        run: |
+          mkdir msix_layout
+          mkdir msix_layout\assets
+
+          :: Copy the compiled executable
+          copy cli\dist\pacific.exe msix_layout\pacific.exe
+
+          :: Copy the Store manifest
+          copy cli\AppxManifest.xml msix_layout\AppxManifest.xml
+
+          :: Generate placeholder logo assets (solid blue 150x150 PNG)
+          :: Replace these with real branded PNGs before Store submission
+          python -c "import struct,zlib;d=b'\x89PNG\r\n\x1a\n';w=h=150;raw=b'';[raw:=raw+b'\x00'+bytes([10,22,40])*w for _ in range(h)];ihdr=struct.pack('>IIHBI',w,h,8,2,0);ic=zlib.compress(raw);chunks=b'';chunks+=struct.pack('>I',13)+b'IHDR'+ihdr+struct.pack('>I',zlib.crc32(b'IHDR'+ihdr)&0xffffffff);chunks+=struct.pack('>I',len(ic))+b'IDAT'+ic+struct.pack('>I',zlib.crc32(b'IDAT'+ic)&0xffffffff);chunks+=struct.pack('>I',0)+b'IEND'+struct.pack('>I',zlib.crc32(b'IEND')&0xffffffff);open('msix_layout/assets/Square150x150Logo.png','wb').write(d+chunks);open('msix_layout/assets/Square44x44Logo.png','wb').write(d+chunks);open('msix_layout/assets/Wide310x150Logo.png','wb').write(d+chunks);open('msix_layout/assets/StoreLogo.png','wb').write(d+chunks);print('Placeholder assets generated')"
+
+      # ── 7. Package into .msix ──
+      - name: Build MSIX package
+        shell: powershell
+        run: |
+          # Find MakeAppx.exe from Windows SDK (pre-installed on GitHub runners)
+          $makeAppx = Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits\10\bin" `
+            -Filter "makeappx.exe" -Recurse `
+            | Where-Object { $_.FullName -match "x64" } `
+            | Sort-Object { $_.FullName } -Descending `
+            | Select-Object -First 1 -ExpandProperty FullName
+
+          if (-not $makeAppx) {
+            Write-Error "MakeAppx.exe not found on this runner"
+            exit 1
+          }
+
+          Write-Host "Using: $makeAppx"
+          & $makeAppx pack /d msix_layout /p pacific-cli.msix /o
+          Write-Host "✓ MSIX package created"
+
+      # ── 8. Upload artifacts ──
+      - name: Upload .exe artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pacific-windows-exe
+          path: cli/dist/pacific.exe
+          retention-days: 90
+
+      - name: Upload .msix artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pacific-windows-msix
+          path: pacific-cli.msix
+          retention-days: 90

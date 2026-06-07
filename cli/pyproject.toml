@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pacific-cli"
+version = "1.0.0"
+description = "🌊 Pacific — Elite Quantitative Financial AI CLI"
+readme = "README.md"
+license = {text = "Proprietary"}
+requires-python = ">=3.9"
+authors = [
+    {name = "GRRN", email = "support@grrn.io"},
+]
+keywords = [
+    "financial-ai", "quantitative", "trading", "sentiment-analysis",
+    "portfolio-optimization", "risk-management", "market-analysis",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Financial and Insurance Industry",
+    "License :: Other/Proprietary License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Financial",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "requests>=2.31.0",
+    "python-dotenv>=1.0.0",
+    "winsdk>=1.0.0b10; sys_platform == 'win32'",
+]
+
+[project.urls]
+Homepage = "https://pacific.grrn.io"
+Documentation = "https://pacific.grrn.io/docs"
+Repository = "https://github.com/GRRN-MAKER/PacificProduction"
+"Microsoft Store" = "ms-windows-store://pdp/?productid=pacific"
+
+[project.scripts]
+pacific = "pacific_cli.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["pacific_cli*"]

@@ -1,0 +1,40 @@
+# ═══════════════════════════════════════════════════════
+# 🌊 Pacific — Git Ignore
+# ═══════════════════════════════════════════════════════
+
+# ── Secrets (NEVER commit) ──
+.env
+*.env
+gateway/.env
+
+# ── Python ──
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+*.whl
+*.spec
+
+# ── PyInstaller ──
+cli/dist/
+cli/build/
+cli/*.spec
+
+# ── MSIX build ──
+msix_layout/
+*.msix
+
+# ── IDE ──
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# ── OS ──
+Thumbs.db
+desktop.ini

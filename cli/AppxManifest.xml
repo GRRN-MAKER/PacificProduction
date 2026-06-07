@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  🌊 Pacific CLI — Microsoft Store Package Manifest
+  
+  This file tells the Microsoft Store:
+    • What your app is called
+    • Who published it
+    • What executable to launch
+    • What capabilities it needs
+  
+  IMPORTANT:
+    • Publisher must EXACTLY match your Partner Center certificate subject.
+      Go to Partner Center → App Identity → copy the "Package/Identity/Publisher" value.
+    • ProcessorArchitecture should match your PyInstaller build target.
+    • Version must be bumped with each Store submission (Store rejects same version).
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+  IgnorableNamespaces="uap rescap desktop">
+
+  <Identity
+    Name="GRRN.PacificFinancialAI"
+    Publisher="CN=6B45C4FB-290E-4232-B46B-3CE2666272FE"
+    Version="1.0.0.0"
+    ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>Pacific Financial AI</DisplayName>
+    <PublisherDisplayName>GRRN</PublisherDisplayName>
+    <Logo>assets\StoreLogo.png</Logo>
+    <Description>Elite quantitative financial AI — real-time market analysis, sentiment classification, portfolio optimization, and risk management from your terminal.</Description>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.22621.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+
+  <Applications>
+    <Application Id="PacificCLI"
+                 Executable="pacific.exe"
+                 EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="Pacific Financial AI"
+        Description="Elite Quantitative Financial AI CLI"
+        BackgroundColor="#0a1628"
+        Square150x150Logo="assets\Square150x150Logo.png"
+        Square44x44Logo="assets\Square44x44Logo.png">
+        <uap:DefaultTile Wide310x150Logo="assets\Wide310x150Logo.png" />
+      </uap:VisualElements>
+
+      <!-- Register 'pacific' as a console command users can run from any terminal -->
+      <Extensions>
+        <desktop:Extension Category="windows.appExecutionAlias"
+                          Executable="pacific.exe"
+                          EntryPoint="Windows.FullTrustApplication">
+          <desktop:AppExecutionAlias>
+            <desktop:ExecutionAlias Alias="pacific.exe" />
+          </desktop:AppExecutionAlias>
+        </desktop:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <!-- Internet access for API calls to the proxy gateway -->
+    <Capability Name="internetClient" />
+    <!-- Full trust needed for PyInstaller exe + winsdk Store APIs -->
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+
+</Package>
