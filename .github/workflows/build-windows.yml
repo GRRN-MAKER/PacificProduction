@@ -44,8 +44,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install requests python-dotenv pyinstaller
-          # Install winsdk — may fail on some runners, non-fatal
-          try { pip install winsdk } catch { Write-Host "winsdk install skipped (optional)" }
+          # winsdk is optional (only needed at runtime on real Windows)
+          $ErrorActionPreference = 'Continue'
+          pip install winsdk 2>&1 | Out-Null
+          $ErrorActionPreference = 'Stop'
+          Write-Host "Core dependencies installed"
 
       # ── 4. Compile to standalone .exe ──
       - name: Build pacific.exe with PyInstaller
