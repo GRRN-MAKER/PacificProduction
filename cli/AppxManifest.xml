@@ -17,9 +17,11 @@
 <Package
   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
   xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
+  xmlns:uap5="http://schemas.microsoft.com/appx/manifest/uap/windows10/5"
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
   xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
-  IgnorableNamespaces="uap rescap desktop">
+  IgnorableNamespaces="uap uap3 uap5 rescap desktop">
 
   <Identity
     Name="GRRN.PacificFinancialAI"
@@ -57,13 +59,11 @@
 
       <!-- Register 'pacific' as a console command users can run from any terminal -->
       <Extensions>
-        <desktop:Extension Category="windows.appExecutionAlias"
-                          Executable="pacific.exe"
-                          EntryPoint="Windows.FullTrustApplication">
-          <desktop:AppExecutionAlias>
+        <uap3:Extension Category="windows.appExecutionAlias">
+          <uap3:AppExecutionAlias>
             <desktop:ExecutionAlias Alias="pacific.exe" />
-          </desktop:AppExecutionAlias>
-        </desktop:Extension>
+          </uap3:AppExecutionAlias>
+        </uap3:Extension>
       </Extensions>
     </Application>
   </Applications>
