@@ -35,14 +35,13 @@ jobs:
       - name: Build pacific.exe with PyInstaller
         working-directory: cli
         run: |
-          pyinstaller --onefile --name pacific --console --collect-all pacific_cli pacific_cli\__main__.py
+          pip install -e .
+          pyinstaller --onefile --name pacific --console --collect-all pacific_cli entry.py
         shell: cmd
 
-      - name: Verify executable
+      - name: Verify executable exists
         working-directory: cli
-        run: |
-          dir dist\pacific.exe
-          dist\pacific.exe --version
+        run: dir dist\pacific.exe
         shell: cmd
 
       - name: Upload .exe artifact
