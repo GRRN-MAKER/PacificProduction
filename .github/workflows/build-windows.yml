@@ -1,11 +1,12 @@
 # ═══════════════════════════════════════════════════════
-# 🌊 Pacific CLI — Build Windows MSIX Package
+# 🌊 Pacific CLI — Build Windows Packages (EXE + MSI + MSIX)
 # ═══════════════════════════════════════════════════════
 #
 # Triggered on push to main or manual dispatch.
 # 1. Builds pacific.exe via PyInstaller
-# 2. Packages into .msix using Windows SDK makeappx
-# 3. Uploads both .exe and .msix artifacts
+# 2. Packages into .msi using WiX Toolset v4
+# 3. Packages into .msix using Windows SDK makeappx
+# 4. Uploads .exe, .msi, and .msix artifacts
 
 name: Build Pacific CLI for Windows
 
@@ -15,7 +16,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-windows-msix:
+  build-windows-packages:
     runs-on: windows-latest
 
     steps:
@@ -45,6 +46,70 @@ jobs:
         run: dir dist\pacific.exe
         shell: cmd
 
+      # ─── MSI Build using WiX v4 ───
+      - name: Install WiX Toolset v4
+        run: dotnet tool install --global wix
+        shell: cmd
+
+      - name: Create WiX source file
+        working-directory: cli
+        run: |
+          @echo off
+          (
+            echo ^<?xml version="1.0" encoding="UTF-8"?^>
+            echo ^<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"^>
+            echo   ^<Package Name="Pacific Financial AI CLI"
+            echo            Manufacturer="GRRN"
+            echo            Version="1.0.0.0"
+            echo            UpgradeCode="6B45C4FB-290E-4232-B46B-3CE2666272FE"
+            echo            Scope="perUser"^>
+            echo.
+            echo     ^<MajorUpgrade DowngradeErrorMessage="A newer version of Pacific CLI is already installed." /^>
+            echo     ^<MediaTemplate EmbedCab="yes" /^>
+            echo.
+            echo     ^<Feature Id="MainFeature" Title="Pacific CLI" Level="1"^>
+            echo       ^<ComponentGroupRef Id="ProductComponents" /^>
+            echo       ^<ComponentGroupRef Id="PathComponents" /^>
+            echo     ^</Feature^>
+            echo   ^</Package^>
+            echo.
+            echo   ^<Fragment^>
+            echo     ^<StandardDirectory Id="LocalAppDataFolder"^>
+            echo       ^<Directory Id="GRRN_DIR" Name="GRRN"^>
+            echo         ^<Directory Id="INSTALLFOLDER" Name="PacificCLI" /^>
+            echo       ^</Directory^>
+            echo     ^</StandardDirectory^>
+            echo   ^</Fragment^>
+            echo.
+            echo   ^<Fragment^>
+            echo     ^<ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER"^>
+            echo       ^<Component Id="PacificExe" Guid="A1B2C3D4-E5F6-7890-ABCD-EF1234567890"^>
+            echo         ^<File Id="pacific.exe" Source="dist\pacific.exe" KeyPath="yes" /^>
+            echo       ^</Component^>
+            echo     ^</ComponentGroup^>
+            echo   ^</Fragment^>
+            echo.
+            echo   ^<Fragment^>
+            echo     ^<ComponentGroup Id="PathComponents" Directory="INSTALLFOLDER"^>
+            echo       ^<Component Id="PathEntry" Guid="B2C3D4E5-F6A7-8901-BCDE-F12345678901"^>
+            echo         ^<Environment Id="PATH" Name="PATH" Value="[INSTALLFOLDER]" Permanent="no" Part="last" Action="set" System="no" /^>
+            echo       ^</Component^>
+            echo     ^</ComponentGroup^>
+            echo   ^</Fragment^>
+            echo ^</Wix^>
+          ) > pacific.wxs
+          echo === WiX source created ===
+          type pacific.wxs
+        shell: cmd
+
+      - name: Build MSI package
+        working-directory: cli
+        run: |
+          wix build pacific.wxs -o pacific-cli.msi
+          dir pacific-cli.msi
+        shell: cmd
+
+      # ─── MSIX Build ───
       - name: Prepare MSIX package layout
         working-directory: cli
         run: |
@@ -77,11 +142,19 @@ jobs:
           dir pacific-cli.msix
         shell: cmd
 
+      # ─── Upload artifacts ───
       - name: Upload .exe artifact
         uses: actions/upload-artifact@v4
         with:
           name: pacific-windows-exe
           path: cli/dist/pacific.exe
+          retention-days: 90
+
+      - name: Upload .msi artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pacific-windows-msi
+          path: cli/pacific-cli.msi
           retention-days: 90
 
       - name: Upload .msix artifact
