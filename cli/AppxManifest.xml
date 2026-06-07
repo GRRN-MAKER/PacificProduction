@@ -24,7 +24,7 @@
   IgnorableNamespaces="uap uap3 uap5 rescap desktop">
 
   <Identity
-    Name="GRRN.PacificFinancialAI"
+    Name="GRRN.5777388E64F5A"
     Publisher="CN=6B45C4FB-290E-4232-B46B-3CE2666272FE"
     Version="1.0.0.0"
     ProcessorArchitecture="x64" />
