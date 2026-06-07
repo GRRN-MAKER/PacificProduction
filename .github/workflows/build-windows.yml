@@ -11,9 +11,9 @@
 #   3. PyInstaller → pacific.exe (single standalone binary)
 #   4. Assemble MSIX layout (exe + manifest + placeholder assets)
 #   5. MakeAppx.exe → pacific-cli.msix
-#   6. Upload .msix as GitHub Actions artifact
+#   6. Upload artifacts
 #
-# After download: submit the .msix to Microsoft Partner Center.
+# After download: submit the .exe to Microsoft Partner Center.
 
 name: Build Pacific CLI for Windows
 
@@ -23,7 +23,7 @@ on:
   workflow_dispatch:  # Manual trigger from GitHub UI
 
 jobs:
-  build-windows-msix:
+  build-windows-exe:
     runs-on: windows-latest
 
     steps:
@@ -40,43 +40,68 @@ jobs:
 
       # ── 3. Install dependencies ──
       - name: Install dependencies
+        shell: powershell
         run: |
           python -m pip install --upgrade pip
-          pip install requests python-dotenv winsdk pyinstaller
+          pip install requests python-dotenv pyinstaller
+          # Install winsdk — may fail on some runners, non-fatal
+          pip install winsdk || Write-Host "winsdk install skipped (optional)"
 
       # ── 4. Compile to standalone .exe ──
       - name: Build pacific.exe with PyInstaller
+        shell: powershell
         working-directory: cli
         run: |
-          pyinstaller ^
-            --onefile ^
-            --name pacific ^
-            --console ^
-            --collect-all pacific_cli ^
-            pacific_cli\__main__.py
+          pyinstaller `
+            --onefile `
+            --name pacific `
+            --console `
+            --collect-all pacific_cli `
+            pacific_cli/__main__.py
 
       # ── 5. Verify the build ──
       - name: Verify executable
+        shell: powershell
         working-directory: cli
         run: |
-          dir dist\pacific.exe
-          dist\pacific.exe --version
+          Get-Item dist/pacific.exe
+          ./dist/pacific.exe --version
 
       # ── 6. Assemble MSIX package layout ──
       - name: Create MSIX layout
+        shell: powershell
         run: |
-          mkdir msix_layout
-          mkdir msix_layout\assets
+          New-Item -ItemType Directory -Force -Path msix_layout/assets | Out-Null
 
-          :: Copy the compiled executable
-          copy cli\dist\pacific.exe msix_layout\pacific.exe
+          # Copy the compiled executable
+          Copy-Item cli/dist/pacific.exe msix_layout/pacific.exe
 
-          :: Copy the Store manifest
-          copy cli\AppxManifest.xml msix_layout\AppxManifest.xml
+          # Copy the Store manifest
+          Copy-Item cli/AppxManifest.xml msix_layout/AppxManifest.xml
 
-          :: Generate placeholder logo assets (solid blue 150x150 PNG)
-          :: Replace these with real branded PNGs before Store submission
-          python -c "import struct,zlib;d=b'\x89PNG\r\n\x1a\n';w=h=150;raw=b'';[raw:=raw+b'\x00'+bytes([10,22,40])*w for _ in range(h)];ihdr=struct.pack('>IIHBI',w,h,8,2,0);ic=zlib.compress(raw);chunks=b'';chunks+=struct.pack('>I',13)+b'IHDR'+ihdr+struct.pack('>I',zlib.crc32(b'IHDR'+ihdr)&0xffffffff);chunks+=struct.pack('>I',len(ic))+b'IDAT'+ic+struct.pack('>I',zlib.crc32(b'IDAT'+ic)&0xffffffff);chunks+=struct.pack('>I',0)+b'IEND'+struct.pack('>I',zlib.crc32(b'IEND')&0xffffffff);open('msix_layout/assets/Square150x150Logo.png','wb').write(d+chunks);open('msix_layout/assets/Square44x44Logo.png','wb').write(d+chunks);open('msix_layout/assets/Wide310x150Logo.png','wb').write(d+chunks);open('msix_layout/assets/StoreLogo.png','wb').write(d+chunks);print('Placeholder assets generated')"
+          # Generate placeholder logo assets (solid blue PNG)
+          python -c @"
+          import struct, zlib, os
+          def make_png(w, h, path):
+              d = b'\x89PNG\r\n\x1a\n'
+              raw = b''
+              for _ in range(h):
+                  raw += b'\x00' + bytes([10, 22, 40]) * w
+              ihdr = struct.pack('>IIHBI', w, h, 8, 2, 0)
+              ic = zlib.compress(raw)
+              chunks = b''
+              chunks += struct.pack('>I', 13) + b'IHDR' + ihdr + struct.pack('>I', zlib.crc32(b'IHDR' + ihdr) & 0xffffffff)
+              chunks += struct.pack('>I', len(ic)) + b'IDAT' + ic + struct.pack('>I', zlib.crc32(b'IDAT' + ic) & 0xffffffff)
+              chunks += struct.pack('>I', 0) + b'IEND' + struct.pack('>I', zlib.crc32(b'IEND') & 0xffffffff)
+              with open(path, 'wb') as f:
+                  f.write(d + chunks)
+          os.makedirs('msix_layout/assets', exist_ok=True)
+          make_png(150, 150, 'msix_layout/assets/Square150x150Logo.png')
+          make_png(44, 44, 'msix_layout/assets/Square44x44Logo.png')
+          make_png(310, 150, 'msix_layout/assets/Wide310x150Logo.png')
+          make_png(50, 50, 'msix_layout/assets/StoreLogo.png')
+          print('Placeholder assets generated')
+          "@
 
       # ── 7. Package into .msix ──
       - name: Build MSIX package
@@ -96,7 +121,7 @@ jobs:
 
           Write-Host "Using: $makeAppx"
           & $makeAppx pack /d msix_layout /p pacific-cli.msix /o
-          Write-Host "✓ MSIX package created"
+          Write-Host "MSIX package created"
 
       # ── 8. Upload artifacts ──
       - name: Upload .exe artifact
