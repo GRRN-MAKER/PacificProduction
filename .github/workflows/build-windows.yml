@@ -1,142 +1,53 @@
 # ═══════════════════════════════════════════════════════
-# 🌊 Pacific CLI — Build Windows .exe + .msix Package
+# 🌊 Pacific CLI — Build Windows .exe
 # ═══════════════════════════════════════════════════════
 #
 # Triggered on push to main or manual dispatch.
-# Runs on a cloud-hosted Windows runner (free with GitHub).
-#
-# Flow:
-#   1. Checkout code
-#   2. Install Python 3.11 + dependencies
-#   3. PyInstaller → pacific.exe (single standalone binary)
-#   4. Assemble MSIX layout (exe + manifest + placeholder assets)
-#   5. MakeAppx.exe → pacific-cli.msix
-#   6. Upload artifacts
-#
-# After download: submit the .exe to Microsoft Partner Center.
+# Builds pacific.exe via PyInstaller on a Windows runner.
+# Download the artifact and upload to Microsoft Partner Center.
 
 name: Build Pacific CLI for Windows
 
 on:
   push:
     branches: [main]
-  workflow_dispatch:  # Manual trigger from GitHub UI
+  workflow_dispatch:
 
 jobs:
   build-windows-exe:
     runs-on: windows-latest
 
     steps:
-      # ── 1. Pull code ──
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ── 2. Python setup ──
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: "pip"
 
-      # ── 3. Install dependencies ──
       - name: Install dependencies
-        shell: powershell
         run: |
           python -m pip install --upgrade pip
           pip install requests python-dotenv pyinstaller
-          # winsdk is optional (only needed at runtime on real Windows)
-          $ErrorActionPreference = 'Continue'
-          pip install winsdk 2>&1 | Out-Null
-          $ErrorActionPreference = 'Stop'
-          Write-Host "Core dependencies installed"
+        shell: cmd
 
-      # ── 4. Compile to standalone .exe ──
       - name: Build pacific.exe with PyInstaller
-        shell: powershell
         working-directory: cli
         run: |
-          pyinstaller `
-            --onefile `
-            --name pacific `
-            --console `
-            --collect-all pacific_cli `
-            pacific_cli/__main__.py
+          pyinstaller --onefile --name pacific --console --collect-all pacific_cli pacific_cli\__main__.py
+        shell: cmd
 
-      # ── 5. Verify the build ──
       - name: Verify executable
-        shell: powershell
         working-directory: cli
         run: |
-          Get-Item dist/pacific.exe
-          ./dist/pacific.exe --version
+          dir dist\pacific.exe
+          dist\pacific.exe --version
+        shell: cmd
 
-      # ── 6. Assemble MSIX package layout ──
-      - name: Create MSIX layout
-        shell: powershell
-        run: |
-          New-Item -ItemType Directory -Force -Path msix_layout/assets | Out-Null
-
-          # Copy the compiled executable
-          Copy-Item cli/dist/pacific.exe msix_layout/pacific.exe
-
-          # Copy the Store manifest
-          Copy-Item cli/AppxManifest.xml msix_layout/AppxManifest.xml
-
-          # Generate placeholder logo assets (solid blue PNG)
-          python -c @"
-          import struct, zlib, os
-          def make_png(w, h, path):
-              d = b'\x89PNG\r\n\x1a\n'
-              raw = b''
-              for _ in range(h):
-                  raw += b'\x00' + bytes([10, 22, 40]) * w
-              ihdr = struct.pack('>IIHBI', w, h, 8, 2, 0)
-              ic = zlib.compress(raw)
-              chunks = b''
-              chunks += struct.pack('>I', 13) + b'IHDR' + ihdr + struct.pack('>I', zlib.crc32(b'IHDR' + ihdr) & 0xffffffff)
-              chunks += struct.pack('>I', len(ic)) + b'IDAT' + ic + struct.pack('>I', zlib.crc32(b'IDAT' + ic) & 0xffffffff)
-              chunks += struct.pack('>I', 0) + b'IEND' + struct.pack('>I', zlib.crc32(b'IEND') & 0xffffffff)
-              with open(path, 'wb') as f:
-                  f.write(d + chunks)
-          os.makedirs('msix_layout/assets', exist_ok=True)
-          make_png(150, 150, 'msix_layout/assets/Square150x150Logo.png')
-          make_png(44, 44, 'msix_layout/assets/Square44x44Logo.png')
-          make_png(310, 150, 'msix_layout/assets/Wide310x150Logo.png')
-          make_png(50, 50, 'msix_layout/assets/StoreLogo.png')
-          print('Placeholder assets generated')
-          "@
-
-      # ── 7. Package into .msix ──
-      - name: Build MSIX package
-        shell: powershell
-        run: |
-          # Find MakeAppx.exe from Windows SDK (pre-installed on GitHub runners)
-          $makeAppx = Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits\10\bin" `
-            -Filter "makeappx.exe" -Recurse `
-            | Where-Object { $_.FullName -match "x64" } `
-            | Sort-Object { $_.FullName } -Descending `
-            | Select-Object -First 1 -ExpandProperty FullName
-
-          if (-not $makeAppx) {
-            Write-Error "MakeAppx.exe not found on this runner"
-            exit 1
-          }
-
-          Write-Host "Using: $makeAppx"
-          & $makeAppx pack /d msix_layout /p pacific-cli.msix /o
-          Write-Host "MSIX package created"
-
-      # ── 8. Upload artifacts ──
       - name: Upload .exe artifact
         uses: actions/upload-artifact@v4
         with:
           name: pacific-windows-exe
           path: cli/dist/pacific.exe
-          retention-days: 90
-
-      - name: Upload .msix artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: pacific-windows-msix
-          path: pacific-cli.msix
           retention-days: 90
