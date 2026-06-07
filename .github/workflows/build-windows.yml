@@ -45,7 +45,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests python-dotenv pyinstaller
           # Install winsdk — may fail on some runners, non-fatal
-          pip install winsdk || Write-Host "winsdk install skipped (optional)"
+          try { pip install winsdk } catch { Write-Host "winsdk install skipped (optional)" }
 
       # ── 4. Compile to standalone .exe ──
       - name: Build pacific.exe with PyInstaller
