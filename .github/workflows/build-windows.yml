@@ -1,10 +1,11 @@
 # ═══════════════════════════════════════════════════════
-# 🌊 Pacific CLI — Build Windows .exe
+# 🌊 Pacific CLI — Build Windows MSIX Package
 # ═══════════════════════════════════════════════════════
 #
 # Triggered on push to main or manual dispatch.
-# Builds pacific.exe via PyInstaller on a Windows runner.
-# Download the artifact and upload to Microsoft Partner Center.
+# 1. Builds pacific.exe via PyInstaller
+# 2. Packages into .msix using Windows SDK makeappx
+# 3. Uploads both .exe and .msix artifacts
 
 name: Build Pacific CLI for Windows
 
@@ -14,7 +15,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-windows-exe:
+  build-windows-msix:
     runs-on: windows-latest
 
     steps:
@@ -44,9 +45,48 @@ jobs:
         run: dir dist\pacific.exe
         shell: cmd
 
+      - name: Prepare MSIX package layout
+        working-directory: cli
+        run: |
+          mkdir msix_layout
+          copy dist\pacific.exe msix_layout\
+          copy AppxManifest.xml msix_layout\
+          xcopy assets msix_layout\assets\ /E /I /Y
+          echo === Layout contents ===
+          dir msix_layout\
+          dir msix_layout\assets\
+        shell: cmd
+
+      - name: Find Windows SDK makeappx.exe
+        id: find-sdk
+        run: |
+          $makeappx = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter "makeappx.exe" | Where-Object { $_.FullName -match "x64" } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if ($makeappx) {
+            echo "MAKEAPPX=$($makeappx.FullName)" >> $env:GITHUB_OUTPUT
+            Write-Host "Found makeappx at: $($makeappx.FullName)"
+          } else {
+            Write-Error "makeappx.exe not found"
+            exit 1
+          }
+        shell: pwsh
+
+      - name: Build MSIX package
+        working-directory: cli
+        run: |
+          "${{ steps.find-sdk.outputs.MAKEAPPX }}" pack /d msix_layout /p pacific-cli.msix /o
+          dir pacific-cli.msix
+        shell: cmd
+
       - name: Upload .exe artifact
         uses: actions/upload-artifact@v4
         with:
           name: pacific-windows-exe
           path: cli/dist/pacific.exe
+          retention-days: 90
+
+      - name: Upload .msix artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pacific-windows-msix
+          path: cli/pacific-cli.msix
           retention-days: 90
