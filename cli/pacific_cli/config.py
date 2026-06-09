@@ -1,45 +1,52 @@
 """
 Pacific CLI — Configuration.
 
-SECURITY MODEL:
-  - CLI contains ZERO secrets. No API keys. No tokens. No passwords.
-  - Authentication is handled by the Windows OS via Microsoft Store license.
-  - Every request sends a Windows Store token → proxy validates with Microsoft.
-  - No login. No registration. No accounts. No database.
-  - User buys/trials through Microsoft Store → Windows knows → CLI works.
-
-This file stores ONLY user preferences (temperature, max_tokens, etc.).
+Stores user preferences and authentication credentials.
+API key is obtained after login/registration and stored locally.
 """
 
 import json
+import os
 from pathlib import Path
+from typing import Optional
+
+# ── Directories ──────────────────────────────────────────────────────
 
 CONFIG_DIR = Path.home() / ".pacific"
 CONFIG_FILE = CONFIG_DIR / "config.json"
+OUTPUT_DIR = CONFIG_DIR / "outputs"
+CACHE_DIR = CONFIG_DIR / "cache"
 
-# Public proxy URL — contains zero secrets. Cloudflare tunnel endpoint.
-PROXY_URL = "https://pacific-gateway.grrn.io"
+# Pacific API Gateway — Cloudflare tunnel endpoint
+API_BASE_URL = "https://pacific-gateway.grrn.io"
 
 DEFAULTS = {
-    "proxy_url": PROXY_URL,
+    "api_base_url": API_BASE_URL,
+    "api_key": "",
+    "model_name": "pacific",
     "max_tokens": 8192,
     "temperature": 0.7,
     "thinking_enabled": False,
     "stream": True,
     "theme": "ocean",
+    "default_period": "3mo",
+    "chart_style": "file",
+    "ticker_refresh_secs": 5,
+    "output_dir": str(OUTPUT_DIR),
     "history_enabled": True,
     "history_file": str(CONFIG_DIR / "history.jsonl"),
 }
 
 
-def ensure_config_dir():
-    """Create ~/.pacific/ if it doesn't exist."""
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+def _ensure_dirs():
+    """Create config / output / cache directories."""
+    for d in (CONFIG_DIR, OUTPUT_DIR, CACHE_DIR):
+        d.mkdir(parents=True, exist_ok=True)
 
 
 def load_config() -> dict:
     """Load user preferences from disk, merging with defaults."""
-    ensure_config_dir()
+    _ensure_dirs()
     if CONFIG_FILE.exists():
         try:
             with open(CONFIG_FILE) as f:
@@ -52,17 +59,41 @@ def load_config() -> dict:
 
 
 def save_config(config: dict):
-    """Save preferences to disk. NEVER stores secrets of any kind."""
-    ensure_config_dir()
-    # Explicitly strip anything that could be a secret
-    safe_keys = {"proxy_url", "max_tokens", "temperature", "thinking_enabled",
-                 "stream", "theme", "history_enabled", "history_file"}
-    safe_config = {k: v for k, v in config.items() if k in safe_keys}
+    """Save preferences to disk."""
+    _ensure_dirs()
     with open(CONFIG_FILE, "w") as f:
-        json.dump(safe_config, f, indent=2)
+        json.dump(config, f, indent=2)
 
 
-def get_proxy_url() -> str:
-    """Get proxy URL from config. This is public, not a secret."""
-    config = load_config()
-    return config.get("proxy_url", PROXY_URL)
+def get_api_key() -> Optional[str]:
+    """Return API key from env → config file, or None."""
+    key = os.environ.get("PACIFIC_API_KEY")
+    if key:
+        return key
+    cfg = load_config()
+    return cfg.get("api_key") or None
+
+
+def set_api_key(key: str):
+    """Store API key in config."""
+    cfg = load_config()
+    cfg["api_key"] = key
+    save_config(cfg)
+
+
+def get_api_base_url() -> str:
+    """Get the API base URL."""
+    cfg = load_config()
+    return cfg.get("api_base_url", API_BASE_URL)
+
+
+def get_config_value(key: str):
+    """Get a single config value."""
+    return load_config().get(key)
+
+
+def set_config_value(key: str, value):
+    """Set a single config value."""
+    cfg = load_config()
+    cfg[key] = value
+    save_config(cfg)

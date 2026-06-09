@@ -1,63 +1,45 @@
 """
 Pacific CLI — API Client.
 
-SECURITY MODEL:
-  - Client ships with ZERO secrets. No API keys. No tokens. Nothing.
-  - Authentication is handled by the Windows OS via Microsoft Store license.
-  - Every request: CLI asks Windows for a Store token → sends to proxy.
-  - Proxy asks Microsoft: "Is this token active?" → YES = proxy to AI, NO = 403.
-  - No login. No registration. No accounts. No database.
-  - User's only interaction: buy/trial from Microsoft Store → open CLI → use it.
+Authentication: API key stored in ~/.pacific/config.json.
+User registers/logs in → receives API key → key sent with every request.
+Server validates key + checks subscription status.
 """
 
 import json
 import sys
-import asyncio
 from typing import Generator, Optional
 
 import requests
 
-from .config import load_config, get_proxy_url
-from .license import get_windows_store_token
+from .config import load_config, get_api_key, get_api_base_url
 
 
 class PacificClient:
     """
-    Client for the Pacific API Gateway.
-    Contains ZERO hardcoded keys.
-    Authentication = Windows Store token sent with every request.
+    Client for the Pacific API.
+    Uses API key authentication (obtained via login/register).
     """
 
     def __init__(self):
-        self.proxy_url = get_proxy_url().rstrip("/")
+        self.base_url = get_api_base_url().rstrip("/")
         self.config = load_config()
 
-    def _get_token(self) -> str:
-        """
-        Get the Microsoft Store Collection ID token from the local Windows OS.
-        This is a cryptographically signed identity — NOT a secret API key.
-        Windows generates it on-demand from the logged-in Microsoft account.
-        """
-        try:
-            token = asyncio.run(get_windows_store_token())
-        except RuntimeError:
-            # Already inside an event loop (e.g., Jupyter)
-            loop = asyncio.get_event_loop()
-            token = loop.run_until_complete(get_windows_store_token())
-
-        if not token:
-            print("\033[1;31m✗ Could not verify Microsoft Store license.\033[0m")
+    def _get_headers(self) -> dict:
+        """Build request headers with API key."""
+        api_key = get_api_key()
+        if not api_key:
+            print("\033[1;31m✗ Not signed in.\033[0m")
             print()
-            print("  Possible causes:")
-            print("    • You are not signed into a Microsoft account on this PC")
-            print("    • Pacific was not installed from the Microsoft Store")
-            print("    • Your 7-day free trial has not started yet")
+            print("  Sign in:   \033[1;36mpacific login\033[0m")
+            print("  Register:  \033[1;36mpacific register\033[0m")
             print()
-            print("  Get Pacific from the Microsoft Store:")
-            print("    \033[1;36mms-windows-store://pdp/?productid=pacific\033[0m")
             sys.exit(1)
 
-        return token
+        return {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        }
 
     # ─── Chat (Main Method) ──────────────────────────────────────────
 
@@ -73,22 +55,20 @@ class PacificClient:
         Send a chat request. Yields tokens if streaming.
 
         Flow:
-          1. Ask Windows OS for Store token (proves subscription is active)
-          2. Send token + messages to proxy
-          3. Proxy validates with Microsoft in real-time
-          4. If active → proxy calls AI with hidden key → returns response
-          5. If inactive → proxy returns 403 → we tell user to renew
+          1. Get API key from config
+          2. Send key + messages to server
+          3. Server validates key + checks subscription
+          4. If active → proxy to AI backend → stream response
+          5. If inactive → 403 → tell user to renew
         """
         max_tokens = max_tokens or self.config.get("max_tokens", 8192)
         temperature = temperature if temperature is not None else self.config.get("temperature", 0.7)
         stream = stream if stream is not None else self.config.get("stream", True)
         thinking = thinking if thinking is not None else self.config.get("thinking_enabled", False)
 
-        # Get Windows Store token (proves active subscription)
-        token = self._get_token()
+        headers = self._get_headers()
 
         payload = {
-            "windowsToken": token,
             "messages": messages,
             "max_tokens": max_tokens,
             "temperature": temperature,
@@ -98,8 +78,9 @@ class PacificClient:
 
         try:
             resp = requests.post(
-                f"{self.proxy_url}/api/chat",
+                f"{self.base_url}/api/chat",
                 json=payload,
+                headers=headers,
                 stream=stream,
                 timeout=120,
             )
@@ -107,10 +88,10 @@ class PacificClient:
             # ── Handle errors ──
             if resp.status_code == 401:
                 detail = self._parse_error_detail(resp)
-                print("\033[1;31m✗ License verification failed.\033[0m")
-                print(f"  {detail.get('message', 'Could not verify Windows Store license.')}")
+                print("\033[1;31m✗ Authentication failed.\033[0m")
+                print(f"  {detail.get('message', 'Invalid or expired API key.')}")
                 print()
-                print("  Make sure Pacific was installed from the Microsoft Store.")
+                print("  Sign in again:  \033[1;36mpacific login\033[0m")
                 sys.exit(1)
 
             elif resp.status_code == 403:
@@ -118,9 +99,7 @@ class PacificClient:
                 print("\033[1;31m✗ Subscription inactive.\033[0m")
                 print(f"  {detail.get('message', 'Your trial or subscription has ended.')}")
                 print()
-                renew_url = detail.get("renew_url", "ms-windows-store://pdp/?productid=pacific")
-                print(f"  Renew in Microsoft Store:")
-                print(f"    \033[1;36m{renew_url}\033[0m")
+                print("  Subscribe:  \033[1;36mhttps://pacific.grrn.io/subscribe\033[0m")
                 sys.exit(1)
 
             elif resp.status_code == 429:
@@ -181,17 +160,50 @@ class PacificClient:
         ]
         yield from self.chat(messages, **kwargs)
 
-    # ─── Public endpoints (no token needed) ──────────────────────────
+    # ─── Image Analysis ──────────────────────────────────────────────
+
+    def analyze_image(
+        self,
+        image_path: str,
+        prompt: str = "Analyze this financial chart. Identify patterns, trends, key levels, and provide a trading outlook.",
+        **kwargs,
+    ) -> Generator[str, None, None]:
+        """Analyze an image (chart, screenshot) with AI vision."""
+        import base64
+        from pathlib import Path
+
+        path = Path(image_path).expanduser().resolve()
+        if not path.exists():
+            print(f"\033[1;31m✗ Image not found: {path}\033[0m")
+            return
+
+        with open(path, "rb") as f:
+            b64 = base64.b64encode(f.read()).decode("utf-8")
+
+        ext = path.suffix.lower().lstrip(".")
+        mime = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+                "gif": "image/gif", "webp": "image/webp"}.get(ext, "image/png")
+
+        messages = [
+            {"role": "system", "content": "You are Pacific, an elite quantitative financial AI with vision capabilities."},
+            {"role": "user", "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+            ]},
+        ]
+        yield from self.chat(messages, **kwargs)
+
+    # ─── Public endpoints (no auth needed) ───────────────────────────
 
     def get_plans(self) -> dict:
         """Fetch pricing info (public, no auth)."""
-        resp = requests.get(f"{self.proxy_url}/v1/plans", timeout=10)
+        resp = requests.get(f"{self.base_url}/v1/plans", timeout=10)
         resp.raise_for_status()
         return resp.json()
 
     def health_check(self) -> dict:
         """Check gateway and backend health (public, no auth)."""
-        resp = requests.get(f"{self.proxy_url}/health", timeout=10)
+        resp = requests.get(f"{self.base_url}/health", timeout=10)
         resp.raise_for_status()
         return resp.json()
 

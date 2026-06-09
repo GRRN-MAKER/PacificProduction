@@ -1,5 +1,5 @@
-# 🌊 Pacific Gateway — Stateless Microsoft Store License Proxy
-# Zero database. Zero accounts. Validates Windows Store tokens with Microsoft.
+# 🌊 Pacific Gateway — Auth + AI Proxy
+# MongoDB for users, Stripe for billing, proxies to AI backend.
 FROM python:3.11-slim
 
 WORKDIR /app
@@ -7,7 +7,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY server.py key_manager.py ./
+COPY server.py auth_manager.py ./
 
 EXPOSE 8080
 

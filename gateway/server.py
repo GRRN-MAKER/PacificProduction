@@ -1,81 +1,87 @@
 """
-Pacific API Gateway — Stateless Microsoft Store license enforcement.
+Pacific API Gateway — Password/OTP/Subscription authentication.
 
 ARCHITECTURE:
-  ┌───────────────────────────────────┐
-  │ Windows PC (pacific.exe)          │
-  │  • Contains ZERO secrets          │
-  │  • Asks Windows for Store token   │
-  │  • Sends token + prompt to proxy  │
-  └──────────────┬────────────────────┘
+  ┌────────────────────────────────────┐
+  │ User's PC (pacific.exe / CLI)      │
+  │  • Stores API key in config        │
+  │  • Sends key with every request    │
+  └──────────────┬─────────────────────┘
                  │
     ── Cloudflare Tunnel (HTTPS) ──
                  │
-  ┌──────────────▼────────────────────┐
-  │ This Server (FastAPI on :8080)    │
-  │  1. Receives Windows Store token  │
-  │  2. Asks Microsoft: "Active?"     │
-  │  3. If YES → attach hidden key    │
-  │     → proxy to Pacific vLLM       │
-  │  4. If NO → 403 Access Denied     │
-  │  • ZERO database                  │
-  │  • ZERO user accounts             │
-  │  • ZERO stored state              │
-  └──────────────┬────────────────────┘
+  ┌──────────────▼─────────────────────┐
+  │ This Server (FastAPI on :8080)     │
+  │  1. Receives API key in header     │
+  │  2. Validates key + subscription   │
+  │  3. If active → proxy to AI       │
+  │  4. If expired → 403              │
+  │  • MongoDB for user accounts       │
+  │  • Stripe for subscription billing │
+  └──────────────┬─────────────────────┘
                  │
-  ┌──────────────▼────────────────────┐
-  │ Pacific vLLM (Lambda A10 GPU)     │
-  │  • 9B param financial AI          │
-  │  • API key lives ONLY on proxy    │
-  └───────────────────────────────────┘
+  ┌──────────────▼─────────────────────┐
+  │ Pacific vLLM (Lambda GPU)          │
+  │  • 9B param financial AI           │
+  │  • API key lives ONLY on gateway   │
+  └────────────────────────────────────┘
 
-PRICING (configured in Microsoft Partner Center, NOT here):
-  • 7-day free trial
-  • $40/month flat fee — unlimited tokens
-  • Microsoft auto-bills on day 8
-  • Card fails → Microsoft marks inactive → we block
+AUTH:
+  - User registers with email + password
+  - Server sends OTP to email for verification
+  - Verified user gets API key
+  - API key sent in Authorization header
+  - Server validates key, checks subscription
+  - Stripe handles billing ($40/mo, 7-day trial)
 """
 
 import os
 import time
 import logging
+import secrets
 from contextlib import asynccontextmanager
 
 import httpx
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 from dotenv import load_dotenv
 
-from key_manager import validate_store_license, check_rate_limit
+from auth_manager import (
+    register_user, verify_otp, login_user, validate_api_key,
+    get_subscription_status, forgot_password, reset_password,
+    check_rate_limit,
+)
 
 load_dotenv()
 
-# ─── Configuration (server-side secrets — NEVER sent to CLI) ─────────
+# ─── Configuration ────────────────────────────────────────────────────
 
 PACIFIC_BACKEND_URL = os.getenv("PACIFIC_BACKEND_URL", "https://pacific.grrn.io")
-PACIFIC_BACKEND_KEY = os.getenv("PACIFIC_API_KEY", "")   # Hidden AI API key for Lambda
+PACIFIC_BACKEND_KEY = os.getenv("PACIFIC_API_KEY", "")
 GATEWAY_ADMIN_KEY = os.getenv("GATEWAY_ADMIN_KEY", "")
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
 logging.basicConfig(level=LOG_LEVEL)
 logger = logging.getLogger("pacific.gateway")
 
-# ─── App ─────────────────────────────────────────────────────────────
+
+# ─── App ──────────────────────────────────────────────────────────────
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("🌊 Pacific Gateway starting (stateless, Microsoft Store auth)...")
+    logger.info("🌊 Pacific Gateway starting (password/OTP/subscription auth)...")
     logger.info(f"   Backend: {PACIFIC_BACKEND_URL}")
     logger.info(f"   API key configured: {'YES' if PACIFIC_BACKEND_KEY else 'NO'}")
     yield
     logger.info("🌊 Pacific Gateway shutting down.")
 
+
 app = FastAPI(
     title="Pacific API Gateway",
-    version="3.0.0",
-    description="Stateless proxy — validates Microsoft Store licenses, proxies to AI backend. Zero database, zero accounts.",
+    version="4.0.0",
+    description="Auth gateway — password/OTP registration, subscription enforcement, AI proxy.",
     lifespan=lifespan,
 )
 
@@ -87,30 +93,46 @@ app.add_middleware(
 )
 
 
-# ─── Request Model ───────────────────────────────────────────────────
+# ─── Request Models ───────────────────────────────────────────────────
 
 class ChatRequest(BaseModel):
-    """
-    Every CLI request sends exactly two things:
-      1. windowsToken — cryptographically signed by the local Windows OS
-      2. userPrompt   — the user's question / chat messages
-
-    Optional fields control generation behavior.
-    NO API keys. NO passwords. NO user IDs.
-    """
-    windowsToken: str                      # Microsoft Store Collection ID from Windows
-    userPrompt: str = ""                   # Single-turn prompt (simple mode)
-    messages: list = None                  # Multi-turn conversation (advanced mode)
+    messages: list = None
+    userPrompt: str = ""
     max_tokens: int = 8192
     temperature: float = 0.7
     stream: bool = True
     enable_thinking: bool = False
 
 
-# ─── Helpers ─────────────────────────────────────────────────────────
+class RegisterRequest(BaseModel):
+    email: str
+    password: str
+
+
+class VerifyOTPRequest(BaseModel):
+    email: str
+    otp: str
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+class ResetPasswordRequest(BaseModel):
+    email: str
+    code: str
+    new_password: str
+
+
+# ─── Helpers ──────────────────────────────────────────────────────────
 
 def get_client_ip(request: Request) -> str:
-    """Extract real client IP (Cloudflare sets CF-Connecting-IP)."""
+    """Extract real client IP."""
     return (
         request.headers.get("CF-Connecting-IP")
         or request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
@@ -118,11 +140,103 @@ def get_client_ip(request: Request) -> str:
     )
 
 
-# ─── Routes: Health (Public — no auth) ───────────────────────────────
+def get_api_key_from_header(request: Request) -> str:
+    """Extract API key from Authorization header."""
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        return auth[7:]
+    return ""
+
+
+# ─── Auth Routes ──────────────────────────────────────────────────────
+
+@app.post("/v1/auth/register", status_code=201)
+async def register(payload: RegisterRequest, request: Request):
+    """Register new user with email + password. Sends OTP to email."""
+    client_ip = get_client_ip(request)
+
+    # Rate limit registration attempts
+    rate = check_rate_limit(client_ip, action="register", limit=5, window=3600)
+    if not rate["allowed"]:
+        raise HTTPException(429, detail="Too many registration attempts. Try again later.")
+
+    result = await register_user(payload.email, payload.password)
+    if result.get("error"):
+        code = result.get("status_code", 400)
+        raise HTTPException(code, detail=result["error"])
+
+    return {"message": "Account created. Check your email for the verification code."}
+
+
+@app.post("/v1/auth/verify-otp")
+async def verify(payload: VerifyOTPRequest):
+    """Verify email with OTP code. Returns API key on success."""
+    result = await verify_otp(payload.email, payload.otp)
+    if result.get("error"):
+        raise HTTPException(400, detail=result["error"])
+
+    return {
+        "message": "Email verified.",
+        "api_key": result.get("api_key", ""),
+    }
+
+
+@app.post("/v1/auth/login")
+async def login(payload: LoginRequest, request: Request):
+    """Login with email + password. Returns API key + subscription status."""
+    client_ip = get_client_ip(request)
+
+    rate = check_rate_limit(client_ip, action="login", limit=10, window=900)
+    if not rate["allowed"]:
+        raise HTTPException(429, detail="Too many login attempts. Try again later.")
+
+    result = await login_user(payload.email, payload.password)
+    if result.get("error"):
+        code = result.get("status_code", 401)
+        raise HTTPException(code, detail=result["error"])
+
+    return {
+        "api_key": result["api_key"],
+        "subscription": result.get("subscription", {}),
+    }
+
+
+@app.get("/v1/auth/subscription")
+async def subscription_status(request: Request):
+    """Check subscription status for authenticated user."""
+    api_key = get_api_key_from_header(request)
+    if not api_key:
+        raise HTTPException(401, detail="Missing API key")
+
+    result = await get_subscription_status(api_key)
+    if result.get("error"):
+        raise HTTPException(401, detail=result["error"])
+
+    return result
+
+
+@app.post("/v1/auth/forgot-password")
+async def forgot_pw(payload: ForgotPasswordRequest):
+    """Send password reset code to email."""
+    result = await forgot_password(payload.email)
+    # Always return 200 to prevent email enumeration
+    return {"message": "If this email exists, a reset code has been sent."}
+
+
+@app.post("/v1/auth/reset-password")
+async def reset_pw(payload: ResetPasswordRequest):
+    """Reset password with code."""
+    result = await reset_password(payload.email, payload.code, payload.new_password)
+    if result.get("error"):
+        raise HTTPException(400, detail=result["error"])
+    return {"message": "Password reset successfully."}
+
+
+# ─── Health (Public) ──────────────────────────────────────────────────
 
 @app.get("/health")
 async def health():
-    """Health check — verifies backend AI model connectivity."""
+    """Health check."""
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
@@ -137,83 +251,60 @@ async def health():
     return {
         "status": "healthy" if backend_ok else "degraded",
         "service": "Pacific API Gateway",
-        "version": "3.0.0",
+        "version": "4.0.0",
         "backend_connected": backend_ok,
-        "auth_method": "microsoft_store_license",
+        "auth_method": "password_otp_subscription",
         "timestamp": time.time(),
     }
 
 
-# ─── Routes: Chat (Main Endpoint) ────────────────────────────────────
+# ─── Chat (Main Endpoint) ────────────────────────────────────────────
 
 @app.post("/api/chat")
 async def chat(request: Request, payload: ChatRequest):
     """
-    The ONLY endpoint the CLI calls. Stateless. No accounts. No database.
-
-    Flow:
-      1. Extract Windows Store token from request
-      2. Ask Microsoft Store API: "Is this user's subscription active?"
-      3. If YES → attach hidden PACIFIC_API_KEY → proxy to vLLM backend
-      4. If NO  → 403 Access Denied. CLI tells user to renew in Microsoft Store.
+    Main AI endpoint. Requires valid API key + active subscription.
     """
     client_ip = get_client_ip(request)
 
-    # ── Step 0: Rate limit (IP-based — prevents flat-rate abuse) ──
-    rate_check = check_rate_limit(client_ip)
-    if not rate_check["allowed"]:
-        raise HTTPException(
-            status_code=429,
-            detail={
-                "error": "Rate limit exceeded. Please slow down.",
-                "retry_after_seconds": rate_check.get("retry_after_seconds", 60),
-            },
-        )
+    # Rate limit
+    rate = check_rate_limit(client_ip, action="chat", limit=50, window=60)
+    if not rate["allowed"]:
+        raise HTTPException(429, detail={
+            "error": "Rate limit exceeded.",
+            "retry_after_seconds": rate.get("retry_after_seconds", 60),
+        })
 
-    # ── Step 1: Validate Microsoft Store license ──
-    license_result = await validate_store_license(payload.windowsToken)
+    # Validate API key + subscription
+    api_key = get_api_key_from_header(request)
+    if not api_key:
+        raise HTTPException(401, detail={
+            "error": "missing_key",
+            "message": "API key required. Sign in with 'pacific login'.",
+        })
 
-    if not license_result.get("valid"):
-        error = license_result.get("error", "unknown")
-        detail = license_result.get("detail", "Access denied")
-        renew_url = license_result.get("renew_url", "")
+    auth_result = await validate_api_key(api_key)
+    if not auth_result.get("valid"):
+        error = auth_result.get("error", "invalid_key")
+        if error == "subscription_expired":
+            raise HTTPException(403, detail={
+                "error": "subscription_inactive",
+                "message": "Your subscription has expired.",
+                "subscribe_url": "https://pacific.grrn.io/subscribe",
+            })
+        raise HTTPException(401, detail={
+            "error": error,
+            "message": auth_result.get("message", "Invalid API key."),
+        })
 
-        if error == "subscription_inactive":
-            raise HTTPException(
-                status_code=403,
-                detail={
-                    "error": "subscription_inactive",
-                    "message": detail,
-                    "renew_url": renew_url,
-                },
-            )
-        elif error == "invalid_token":
-            raise HTTPException(
-                status_code=401,
-                detail={
-                    "error": "invalid_token",
-                    "message": "Could not verify Windows Store license. Are you running the official app?",
-                },
-            )
-        else:
-            # Server-side issue (timeout, config error, etc.)
-            logger.error(f"License validation failed: {error} — {detail}")
-            raise HTTPException(
-                status_code=503,
-                detail={
-                    "error": "license_check_unavailable",
-                    "message": "License verification is temporarily unavailable. Please try again.",
-                },
-            )
-
-    # ── Step 2: Build the AI request ──
+    # Build AI request
     if payload.messages:
         messages = payload.messages
     else:
         messages = [
             {
                 "role": "system",
-                "content": "You are Pacific, an elite quantitative financial AI. You provide precise, data-driven analysis with institutional-grade insights.",
+                "content": "You are Pacific, an elite quantitative financial AI.",
             },
             {"role": "user", "content": payload.userPrompt},
         ]
@@ -232,7 +323,7 @@ async def chat(request: Request, payload: ChatRequest):
         if body["max_tokens"] < 4096:
             body["max_tokens"] = 4096
 
-    # ── Step 3: Proxy to Pacific backend (hidden key attached HERE) ──
+    # Proxy to backend
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {PACIFIC_BACKEND_KEY}",
@@ -252,10 +343,7 @@ async def chat(request: Request, payload: ChatRequest):
                         async for chunk in resp.aiter_bytes():
                             yield chunk
 
-            return StreamingResponse(
-                stream_proxy(),
-                media_type="text/event-stream",
-            )
+            return StreamingResponse(stream_proxy(), media_type="text/event-stream")
         else:
             async with httpx.AsyncClient() as client:
                 resp = await client.post(
@@ -264,20 +352,19 @@ async def chat(request: Request, payload: ChatRequest):
                     headers=headers,
                     timeout=120.0,
                 )
-
             return JSONResponse(content=resp.json(), status_code=resp.status_code)
 
     except httpx.TimeoutException:
-        raise HTTPException(status_code=504, detail="Backend timeout — please retry")
+        raise HTTPException(504, detail="Backend timeout — please retry")
     except httpx.ConnectError:
-        raise HTTPException(status_code=502, detail="Cannot reach Pacific backend")
+        raise HTTPException(502, detail="Cannot reach Pacific backend")
 
 
-# ─── Routes: Models (Public) ────────────────────────────────────────
+# ─── Models (Public) ─────────────────────────────────────────────────
 
 @app.get("/v1/models")
 async def list_models():
-    """List available models. Public endpoint for compatibility."""
+    """List available models."""
     return {
         "object": "list",
         "data": [{
@@ -290,54 +377,27 @@ async def list_models():
     }
 
 
-# ─── Routes: Pricing Info (Public) ──────────────────────────────────
+# ─── Plans (Public) ──────────────────────────────────────────────────
 
 @app.get("/v1/plans")
 async def list_plans():
-    """Public — show pricing. Subscription managed entirely by Microsoft Store."""
+    """Public pricing info."""
     return {
         "pricing": {
             "trial": "7 days free",
-            "monthly": "$40/month (unlimited tokens)",
-            "platform": "Microsoft Store",
+            "monthly": "$40/month",
+            "annual": "$399/year (save 17%)",
         },
         "features": [
-            "🌊 Pacific V4 — 9B Financial Quantitative AI",
-            "📊 Real-time technical & fundamental analysis",
-            "📈 Sentiment classification (BULLISH / BEARISH / NEUTRAL)",
-            "💼 Portfolio optimization & risk metrics",
-            "🧠 Chain-of-thought reasoning mode",
-            "⚡ Streaming responses",
-            "🔒 Zero-knowledge architecture — your queries are never stored",
+            "Unlimited AI queries",
+            "Real-time market data",
+            "Chart generation (candlestick, comparison)",
+            "PDF/Excel/JSON exports",
+            "File analysis (PDF, CSV, code)",
+            "Image/chart analysis",
+            "Portfolio optimization",
+            "Live price streaming",
         ],
-        "rate_limit": "50 requests/minute (flat rate, unlimited tokens per month)",
-        "subscribe_url": "ms-windows-store://pdp/?productid=pacific",
+        "rate_limit": "50 requests/minute",
+        "subscribe_url": "https://pacific.grrn.io/subscribe",
     }
-
-
-# ─── Routes: Admin ──────────────────────────────────────────────────
-
-@app.get("/admin/health")
-async def admin_health(request: Request):
-    """Admin: detailed health check including config status."""
-    admin_key = request.headers.get("X-Admin-Key", "")
-    if admin_key != GATEWAY_ADMIN_KEY:
-        raise HTTPException(status_code=403, detail="Not authorized")
-
-    return {
-        "status": "healthy",
-        "version": "3.0.0",
-        "auth_method": "microsoft_store_license",
-        "database": "none (stateless)",
-        "backend_url": PACIFIC_BACKEND_URL,
-        "backend_key_set": bool(PACIFIC_BACKEND_KEY),
-        "ms_store_configured": bool(os.getenv("MS_STORE_ID")),
-        "ms_tenant_configured": bool(os.getenv("MS_TENANT_ID")),
-        "cloudflare_tunnel": "pacific-gateway.grrn.io",
-        "timestamp": time.time(),
-    }
-
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8080)

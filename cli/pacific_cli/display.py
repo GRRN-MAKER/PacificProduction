@@ -1,8 +1,5 @@
 """
 Pacific CLI — Rich terminal display formatting.
-
-No usage tracking — Microsoft Store handles billing.
-No tiered plans — one flat price: $40/month + 7-day free trial.
 """
 
 import sys
@@ -84,7 +81,7 @@ def print_token(token: str):
 # ─── Plans Display ───────────────────────────────────────────────────
 
 def print_plans(data: dict):
-    """Print pricing info. One flat plan, managed by Microsoft Store."""
+    """Print pricing info."""
     pricing = data.get("pricing", {})
     features = data.get("features", [])
 
@@ -92,7 +89,7 @@ def print_plans(data: dict):
     print_divider()
     print(f"  Trial:     {GREEN}{pricing.get('trial', '7 days free')}{RESET}")
     print(f"  Monthly:   {CYAN}{pricing.get('monthly', '$40/month')}{RESET}")
-    print(f"  Platform:  Microsoft Store")
+    print(f"  Annual:    {CYAN}{pricing.get('annual', '$399/year')}{RESET}")
     print_divider()
 
     if features:
@@ -103,6 +100,38 @@ def print_plans(data: dict):
     rate = data.get("rate_limit", "50 requests/minute")
     print(f"\n  {DIM}Rate limit: {rate}{RESET}")
 
-    subscribe_url = data.get("subscribe_url", "ms-windows-store://pdp/?productid=pacific")
-    print(f"\n  Get it: {CYAN}{subscribe_url}{RESET}")
+    subscribe_url = data.get("subscribe_url", "https://pacific.grrn.io/subscribe")
+    print(f"\n  Subscribe: {CYAN}{subscribe_url}{RESET}")
     print()
+
+
+# ─── Help Panel ──────────────────────────────────────────────────────
+
+def print_help_panel():
+    """Print the full in-chat help panel with all slash commands."""
+    print(f"""
+{BOLD}Chat Commands:{RESET}
+  {CYAN}/clear{RESET}              Reset conversation history
+  {CYAN}/history{RESET}            Show message count
+  {CYAN}/think on|off{RESET}       Toggle thinking/reasoning mode
+  {CYAN}exit{RESET}                End session
+
+{BOLD}File Operations:{RESET}
+  {CYAN}/file ~/report.pdf{RESET}  Send file to Pacific for AI analysis
+  {CYAN}/open ~/file.pdf{RESET}    Open file with system default app
+  {CYAN}/read ~/data.csv{RESET}    Display file contents in terminal
+  {CYAN}/image chart.png{RESET}    Analyze chart image with AI
+  {DIM}  Supports: .txt, .csv, .json, .py, .pdf, and more{RESET}
+
+{BOLD}Market & Charts:{RESET}
+  {CYAN}/chart AAPL 3mo volume sma20{RESET}    Candlestick chart (PNG)
+  {CYAN}/compare NVDA TSLA AAPL 1y{RESET}      Comparison chart (PNG)
+  {CYAN}/quote AAPL{RESET}                      Quick stock quote
+  {CYAN}/stream AAPL NVDA TSLA [-r 2]{RESET}    Live price stream
+
+{BOLD}Export:{RESET}
+  {CYAN}/export pdf{RESET}                 Save last response as PDF
+  {CYAN}/export json{RESET}                Save last response as JSON
+  {CYAN}/export json AAPL [3mo]{RESET}     Export stock data to JSON
+  {CYAN}/export excel AAPL{RESET}          Export stock data to Excel
+""")

@@ -31,14 +31,20 @@ classifiers = [
 dependencies = [
     "requests>=2.31.0",
     "python-dotenv>=1.0.0",
-    "winsdk>=1.0.0b10; sys_platform == 'win32'",
+    "yfinance>=0.2.40",
+    "mplfinance>=0.12.10b0",
+    "matplotlib>=3.8.0",
+    "pandas>=2.1.0",
+    "openpyxl>=3.1.2",
+    "fpdf2>=2.7.8",
+    "pymupdf>=1.24.0",
 ]
 
 [project.urls]
 Homepage = "https://pacific.grrn.io"
 Documentation = "https://pacific.grrn.io/docs"
 Repository = "https://github.com/GRRN-MAKER/PacificProduction"
-"Microsoft Store" = "ms-windows-store://pdp/?productid=pacific"
+Subscribe = "https://pacific.grrn.io/subscribe"
 
 [project.scripts]
 pacific = "pacific_cli.__main__:main"

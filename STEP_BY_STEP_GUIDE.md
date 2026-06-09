@@ -1,76 +1,56 @@
-# 🌊 Pacific CLI — Microsoft Store Product: Complete Setup Guide
+# 🌊 Pacific CLI — Complete Setup Guide
 
-> **End Goal**: Users find Pacific on the Microsoft Store → Install (7-day free trial) → Open terminal → Use Pacific for financial analysis. No accounts. No API keys. No database.
+> **End Goal**: Users register with email/password → verify OTP → get 7-day free trial → use Pacific for financial analysis, market data, charting, and AI chat. Paid via Stripe after trial.
 
 ---
 
 ## Architecture Overview
 
 ```
-┌────────────────────────────────┐
-│ User's Windows PC              │
-│  pacific.exe (ZERO secrets)    │
-│  1. Asks Windows for Store     │
-│     Collection ID token        │
-│  2. Sends token + prompt       │
-└────────────┬───────────────────┘
+┌────────────────────────────────────────┐
+│ User's PC (Windows / macOS)            │
+│  pacific.exe / pacific binary          │
+│  • 22 commands + 15 slash commands     │
+│  • Market data, charts, PDF/Excel      │
+│  • Stores API key in ~/.pacific/       │
+└────────────┬───────────────────────────┘
              │ HTTPS (Cloudflare)
-┌────────────▼───────────────────┐
-│ Pacific Gateway (FastAPI)      │
-│  pacific-gateway.grrn.io       │
-│  • Validates token w/ MSFT     │
-│  • Attaches hidden API key     │
-│  • Proxies to AI backend       │
-│  • STATELESS — zero database   │
-└────────────┬───────────────────┘
+┌────────────▼───────────────────────────┐
+│ Pacific Gateway (FastAPI)              │
+│  pacific-gateway.grrn.io               │
+│  • Password/OTP auth (MongoDB)         │
+│  • Stripe subscription billing         │
+│  • Rate limiting per API key           │
+│  • Proxies AI requests to backend      │
+└────────────┬───────────────────────────┘
              │
-┌────────────▼───────────────────┐
-│ Pacific vLLM (Lambda A10 GPU)  │
-│  9B param financial AI         │
-│  146.235.213.127:8000          │
-└────────────────────────────────┘
+┌────────────▼───────────────────────────┐
+│ Pacific vLLM (Lambda GPU)              │
+│  9B param financial AI                 │
+│  pacific.grrn.io                       │
+└────────────────────────────────────────┘
 ```
 
 ---
 
-## PHASE 1: Microsoft Partner Center Setup
+## PHASE 1: Infrastructure Setup
 
-### Step 1.1 — Register as a Microsoft Partner
-1. Go to **https://partner.microsoft.com/dashboard**
-2. Sign in with your Microsoft account
-3. Complete the registration — company name: **GRRN**
-4. Accept the App Developer Agreement
+### Step 1.1 — MongoDB
+1. Deploy MongoDB (Atlas free tier or self-hosted)
+2. Create database: `pacific`
+3. Collections auto-created: `users`
+4. Note your connection URI for `MONGO_URI`
 
-### Step 1.2 — Create App Reservation
-1. In Partner Center → **Apps and games** → **New product** → **MSIX or PWA app**
-2. Reserve name: **Pacific Financial AI**
-3. This creates your Product ID (used in `MS_STORE_ID` env var)
+### Step 1.2 — SMTP (OTP Email)
+1. Use Gmail App Password, SendGrid, or any SMTP provider
+2. Note: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`
+3. Set a `SMTP_FROM` address (e.g., `noreply@pacific.grrn.io`)
 
-### Step 1.3 — Configure Subscription Add-on
-1. In your app → **Add-ons** → **New add-on**
-2. Type: **Subscription**
-3. Product ID: `pacific-monthly`
-4. Configure:
-   - **Trial period**: 7 days (free)
-   - **Price**: $40.00/month
-   - **Billing period**: Monthly
-   - Microsoft auto-transitions trial → paid on day 8
-   - Card fails → subscription becomes inactive
-
-### Step 1.4 — Configure Azure AD for B2B
-1. Go to **Azure Portal** → **Azure Active Directory** → **App registrations**
-2. Register new app: `pacific-gateway-b2b`
-3. Note down:
-   - **Application (client) ID** → `MS_CLIENT_ID`
-   - **Directory (tenant) ID** → `MS_TENANT_ID`
-4. Create a client secret → `MS_CLIENT_SECRET`
-5. API permissions: Add `https://onestore.microsoft.com/.default`
-6. Grant admin consent
-
-### Step 1.5 — Get Service Ticket
-1. In Partner Center → **Services** → **Microsoft Store services**
-2. Generate a service ticket for B2B license validation
-3. This is your `MS_SERVICE_TICKET`
+### Step 1.3 — Stripe (Subscription Billing)
+1. Create a Stripe account at **https://stripe.com**
+2. Create a product: **Pacific CLI Pro** — $40/month
+3. Note your **Secret Key** → `STRIPE_SECRET_KEY`
+4. Stripe manages payment, trials, cancellation
 
 ---
 
@@ -84,15 +64,26 @@ Set these on your gateway server (Docker, VPS, etc.):
 PACIFIC_BACKEND_URL=https://pacific.grrn.io
 PACIFIC_API_KEY=<your-vllm-api-key>
 
-# Microsoft Store B2B Auth
-MS_STORE_ID=<from-partner-center>
-MS_TENANT_ID=<azure-ad-tenant>
-MS_CLIENT_ID=<azure-ad-client>
-MS_CLIENT_SECRET=<azure-ad-secret>
-MS_SERVICE_TICKET=<partner-center-ticket>
+# MongoDB (user accounts + OTP)
+MONGO_URI=mongodb+srv://<user>:<pass>@cluster.mongodb.net
+MONGO_DB=pacific
+
+# Email (OTP delivery)
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=your-email@gmail.com
+SMTP_PASS=your-app-password
+SMTP_FROM=noreply@pacific.grrn.io
+
+# Stripe (subscription billing)
+STRIPE_SECRET_KEY=sk_live_...
 
 # Admin
 GATEWAY_ADMIN_KEY=<random-64-char-token>
+
+# Optional
+TRIAL_DAYS=7
+RATE_LIMIT_PER_MINUTE=50
 ```
 
 ### Step 2.2 — Deploy with Docker
@@ -117,7 +108,7 @@ docker run -d \
 
 ---
 
-## PHASE 3: Build the CLI Package
+## PHASE 3: Build the CLI
 
 ### Step 3.1 — Build Python Wheel
 ```bash
@@ -127,88 +118,121 @@ python -m build
 # Creates dist/pacific_cli-1.0.0-py3-none-any.whl
 ```
 
-### Step 3.2 — Create Windows Executable
+### Step 3.2 — Create Executable
 ```bash
 pip install pyinstaller
-pyinstaller --onefile --name pacific pacific_cli/__main__.py
-# Creates dist/pacific.exe
+# Windows:
+pyinstaller --onefile --name pacific --console --collect-all pacific_cli entry.py
+
+# macOS:
+pyinstaller --onefile --name pacific --console --collect-all pacific_cli pacific_cli/__main__.py
 ```
 
-### Step 3.3 — Package as MSIX
-1. Use the **MSIX Packaging Tool** (free from Microsoft Store)
-2. Package `pacific.exe` into an MSIX bundle
-3. Sign with your code signing certificate
-4. Upload to Partner Center
+### Step 3.3 — Obfuscation (Optional)
+```bash
+pip install cython
+# Compile .py → .so/.pyd with Cython, then bundle with PyInstaller
+```
 
 ---
 
-## PHASE 4: Submit to Microsoft Store
+## PHASE 4: User Journey
 
-1. In Partner Center → Your app → **Submissions** → **Start submission**
-2. Fill in:
-   - **Store listing**: Description, screenshots, icon
-   - **Pricing**: Free download (subscription handled via add-on)
-   - **Packages**: Upload signed MSIX
-   - **Age ratings**: Complete questionnaire
-3. Submit for certification (~1-3 business days)
+```
+1. User downloads pacific.exe from grrn.io/pacific
+2. User registers:
+   $ pacific register
+   → Enter email + password
+   → OTP sent to email
+   → Verify OTP → 7-day free trial starts
+3. User logs in:
+   $ pacific login
+   → API key saved to ~/.pacific/config.json
+4. User chats:
+   $ pacific chat
+   → Interactive AI chat with slash commands
+   → /chart AAPL, /export pdf, /image photo.jpg
+5. Day 8: Stripe charges $40/month
+6. User cancels via Stripe portal → subscription expires → API blocked
+```
 
 ---
 
-## PHASE 5: User Journey (What Customers See)
+## PHASE 5: CLI Commands Reference
 
-```
-1. User searches "Pacific Financial AI" in Microsoft Store
-2. User clicks "Install" → "Start free trial" (7-day)
-3. pacific.exe is installed on their system
-4. User opens terminal:
-   $ pacific "What's the outlook for tech sector?"
-   → Windows generates signed token
-   → Proxy validates with Microsoft
-   → Response streams back
-5. Day 8: Microsoft auto-charges $40/month
-6. User cancels: subscription goes inactive → proxy blocks → done
-```
+### Subcommands (22 total)
+| Command | Description |
+|---------|-------------|
+| `pacific chat` | Interactive AI chat with 15+ slash commands |
+| `pacific ask "question"` | Single-turn question |
+| `pacific analyze "text"` | Deep analysis |
+| `pacific sentiment "text"` | Sentiment analysis |
+| `pacific portfolio "holdings"` | Portfolio review |
+| `pacific image <file>` | Vision/image analysis |
+| `pacific chart <ticker>` | Candlestick stock chart |
+| `pacific compare T1 T2 ...` | Multi-stock comparison |
+| `pacific quote <ticker>` | Quick stock quote |
+| `pacific stream <ticker>` | Live price stream |
+| `pacific market` | Market overview (indices) |
+| `pacific info <ticker>` | Company info |
+| `pacific excel <ticker>` | Export stock data to Excel |
+| `pacific pdf <ticker>` | Export analysis to PDF |
+| `pacific json <ticker>` | Export stock data to JSON |
+| `pacific plans` | View subscription plans |
+| `pacific config` | Show/set configuration |
+| `pacific health` | Check API connectivity |
+| `pacific register` | Create new account |
+| `pacific login` | Login + save API key |
+| `pacific logout` | Remove saved API key |
+| `pacific status` | View subscription status |
 
-No API keys. No registration. No database. Just works.
+### In-Chat Slash Commands
+`/help` `/clear` `/history` `/think` `/export pdf|json|excel` `/chart <ticker>` `/compare T1 T2` `/quote <ticker>` `/stream <ticker>` `/file <path>` `/open <path>` `/read <path>` `/image <path>`
 
 ---
 
 ## File Structure
 
 ```
-ibm-cloud-product/
+PacificProduction/
 ├── STEP_BY_STEP_GUIDE.md          ← This file
 ├── gateway/
 │   ├── Dockerfile
-│   ├── requirements.txt           ← fastapi, uvicorn, httpx, dotenv, pydantic
+│   ├── requirements.txt           ← fastapi, uvicorn, httpx, motor, bcrypt
 │   ├── .env.example               ← Template for required env vars
-│   ├── server.py                  ← Stateless FastAPI proxy
-│   └── key_manager.py             ← Microsoft Store license validator
+│   ├── server.py                  ← FastAPI auth proxy (v4.0)
+│   └── auth_manager.py            ← User auth (MongoDB, OTP, Stripe)
 ├── cli/
 │   ├── pyproject.toml
 │   ├── README.md
 │   └── pacific_cli/
 │       ├── __init__.py
-│       ├── __main__.py            ← Entry point + argparse
-│       ├── client.py              ← API client (sends Windows token)
-│       ├── commands.py            ← CLI commands (chat, analyze, etc.)
-│       ├── config.py              ← User preferences (ZERO secrets)
-│       ├── display.py             ← Terminal formatting
-│       └── license.py             ← Windows Store token acquisition
+│       ├── __main__.py            ← Entry point + argparse (22 commands)
+│       ├── auth.py                ← Password/OTP/subscription auth
+│       ├── client.py              ← API client (Bearer token auth)
+│       ├── commands.py            ← All command implementations
+│       ├── config.py              ← Configuration + API key storage
+│       ├── display.py             ← Terminal formatting + help panel
+│       ├── export.py              ← PDF/Excel/JSON export
+│       ├── files.py               ← File reading (PDF, CSV, code, text)
+│       └── market.py              ← Market data, charts, streaming
+└── .github/
+    └── workflows/
+        └── build-windows.yml      ← GitHub Actions: EXE + MSI + MSIX
 ```
 
 ---
 
-## Security Guarantees
+## Security
 
 | Property | Value |
 |----------|-------|
 | Secrets in CLI binary | **ZERO** |
-| User accounts / database | **NONE** |
-| API keys in config files | **NONE** |
-| Auth method | Windows Store Collection ID token |
-| Validation | Real-time with Microsoft Collections API |
+| Auth method | Email/password + OTP verification |
+| API key format | `pac_` + 48-char token |
+| Password storage | bcrypt hashed in MongoDB |
+| OTP | 6-digit, 10-minute expiry, email delivery |
 | Backend key location | Server env var only |
-| Rate limiting | Cloudflare edge + IP-based in-memory |
-| Subscription billing | 100% Microsoft Store |
-| Trial tracking | 100% Microsoft Partner Center |
+| Rate limiting | Per API key + Cloudflare edge |
+| Subscription billing | Stripe (7-day trial → $40/mo) |
+| Trial tracking | MongoDB `subscription.trial_end` |

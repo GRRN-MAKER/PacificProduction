@@ -2,55 +2,91 @@
 
 **Elite Quantitative Financial AI — from your terminal.**
 
-Pacific is a 9B parameter model purpose-built for quantitative finance. Real-time analysis, sentiment classification, portfolio optimization, and risk management — all through a simple CLI.
+Pacific is a 9B parameter model purpose-built for quantitative finance. Real-time analysis, sentiment classification, portfolio optimization, market data, charting, and risk management — all through a powerful CLI with 22 commands and 15+ interactive slash commands.
 
 ## Get Pacific
 
-**Available on the Microsoft Store** — 7-day free trial, then $40/month.
-
-Search **"Pacific Financial AI"** in the Microsoft Store, or:
-
-```
-ms-windows-store://pdp/?productid=pacific
-```
-
-No registration. No accounts. No API keys.
-Install → open terminal → start using it. Windows handles everything.
+**Download from [grrn.io/pacific](https://grrn.io/pacific)** — 7-day free trial, then $40/month via Stripe.
 
 ## Quick Start
 
 ```bash
-# Start chatting (interactive mode)
+# Register (email + OTP verification)
+pacific register
+
+# Login (saves API key locally)
+pacific login
+
+# Start chatting (interactive mode with slash commands)
 pacific chat
 
 # Single query
-pacific "What's the outlook for tech sector Q3 2026?"
-
-# With chain-of-thought reasoning
-pacific chat --think "Analyze macro headwinds for small caps"
+pacific ask "What's the outlook for tech sector Q3 2026?"
 
 # Financial analysis
-pacific analyze "AAPL earnings beat impact" --ticker AAPL --timeframe 1D
+pacific analyze "AAPL earnings beat impact"
 
 # Sentiment classification
 pacific sentiment "Fed announces surprise rate cut of 50bps"
 
 # Portfolio optimization
-pacific portfolio --holdings "AAPL 30%, MSFT 25%, BND 45%" --risk moderate
+pacific portfolio "AAPL 30%, MSFT 25%, BND 45%"
+
+# Stock chart
+pacific chart AAPL --period 6mo
+
+# Live price stream
+pacific stream AAPL
+
+# Image analysis
+pacific image photo.jpg "What does this chart show?"
 ```
 
-## Commands
+## Commands (22 total)
 
 | Command | Description |
 |---------|-------------|
-| `pacific [message]` | Quick single query |
-| `pacific chat [message]` | Interactive chat or single query |
-| `pacific analyze [query]` | Detailed financial analysis |
-| `pacific sentiment [text]` | Classify BULLISH / BEARISH / NEUTRAL |
-| `pacific portfolio` | Portfolio optimization & risk metrics |
-| `pacific plans` | Show pricing info |
-| `pacific config` | Configure CLI preferences |
-| `pacific health` | Check server status |
+| `pacific chat` | Interactive AI chat with 15+ slash commands |
+| `pacific ask "question"` | Single-turn question |
+| `pacific analyze "text"` | Deep financial analysis |
+| `pacific sentiment "text"` | Classify BULLISH / BEARISH / NEUTRAL |
+| `pacific portfolio "holdings"` | Portfolio review & optimization |
+| `pacific image <file>` | Vision/image analysis |
+| `pacific chart <ticker>` | Candlestick chart with indicators |
+| `pacific compare T1 T2 ...` | Multi-stock comparison chart |
+| `pacific quote <ticker>` | Quick stock quote |
+| `pacific stream <ticker>` | Live price stream in terminal |
+| `pacific market` | Market overview (major indices) |
+| `pacific info <ticker>` | Company information |
+| `pacific excel <ticker>` | Export stock data to Excel |
+| `pacific pdf <ticker>` | Export analysis to PDF |
+| `pacific json <ticker>` | Export stock data to JSON |
+| `pacific plans` | View subscription plans |
+| `pacific config` | Show/set configuration |
+| `pacific health` | Check API connectivity |
+| `pacific register` | Create new account |
+| `pacific login` | Login + save API key |
+| `pacific logout` | Remove saved API key |
+| `pacific status` | View subscription status |
+
+## In-Chat Slash Commands
+
+| Command | Action |
+|---------|--------|
+| `/help` | Show all available commands |
+| `/clear` | Clear conversation context |
+| `/history` | Show conversation history |
+| `/think` | Toggle chain-of-thought reasoning |
+| `/export pdf\|json\|excel` | Export last response |
+| `/chart <ticker>` | Candlestick stock chart |
+| `/compare T1 T2 ...` | Multi-stock comparison |
+| `/quote <ticker>` | Quick stock quote |
+| `/stream <ticker>` | Live price stream |
+| `/file <path>` | Read and analyze a file |
+| `/open <path>` | Open file in system viewer |
+| `/read <path>` | Display file contents |
+| `/image <path>` | Analyze an image |
+| `exit` / `quit` | Exit interactive mode |
 
 ## Pricing
 
@@ -58,65 +94,46 @@ pacific portfolio --holdings "AAPL 30%, MSFT 25%, BND 45%" --risk moderate
 |---|---|
 | **Trial** | 7 days free |
 | **Monthly** | $40/month — unlimited tokens |
-| **Platform** | Microsoft Store |
+| **Billing** | Stripe |
 | **Rate Limit** | 50 requests/minute |
 
-Subscribe and manage your subscription entirely through the Microsoft Store.
+## Authentication
 
-## How Authentication Works
-
-Pacific uses **zero-knowledge, stateless authentication**:
-
-1. You install Pacific from the Microsoft Store
-2. Windows generates a cryptographically signed license token
-3. Every request sends this token to the Pacific proxy
-4. The proxy verifies with Microsoft in real-time: "Is this subscription active?"
-5. If YES → your query is processed. If NO → you're told to renew.
-
-**No accounts. No passwords. No API keys. No database.**
-Your queries are never stored or logged.
+1. Register with your email — an OTP code is sent for verification
+2. Login to receive your personal API key (`pac_...`)
+3. API key is saved to `~/.pacific/config.json`
+4. Every request authenticates via Bearer token
+5. Subscription managed through Stripe (trial → active → expired)
 
 ## Configuration
 
 ```bash
 # Show current settings
-pacific config
+pacific config show
 
-# Change proxy URL (advanced)
-pacific config --proxy-url https://custom-proxy.example.com
+# Set API key manually
+pacific config set-key pac_your-key-here
 
-# Set default max tokens
-pacific config --max-tokens 16384
+# Change API base URL
+pacific config api-url https://custom-gateway.example.com
+
+# Set max tokens
+pacific config max-tokens 16384
 
 # Enable thinking mode by default
-pacific config --thinking true
+pacific config thinking true
+
+# Reset to defaults
+pacific config reset
 ```
 
-Settings are stored in `~/.pacific/config.json` — **zero secrets** are ever saved locally.
-
-## Interactive Mode Shortcuts
-
-| Shortcut | Action |
-|----------|--------|
-| `/think` | Toggle chain-of-thought reasoning |
-| `/clear` | Clear conversation context |
-| `/help` | Show available shortcuts |
-| `exit` | Exit interactive mode |
-
-## Development
-
-For development on macOS/Linux (where the Windows Store API isn't available):
-
-```bash
-export PACIFIC_DEV_TOKEN="your-test-token"
-pacific chat "test query"
-```
+Settings are stored in `~/.pacific/config.json`.
 
 ## System Requirements
 
-- Windows 10 or later
-- Microsoft Store account
+- Windows 10+ or macOS 12+
 - Internet connection
+- Python 3.10+ (if installing from source)
 
 ## License
 
