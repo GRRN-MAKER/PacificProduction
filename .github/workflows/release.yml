@@ -1,0 +1,214 @@
+# ═══════════════════════════════════════════════════════
+# 🌊 Pacific CLI — Build & Release (macOS + Windows)
+# ═══════════════════════════════════════════════════════
+#
+# Builds native binaries for macOS (.dmg) and Windows (.exe)
+# then creates a GitHub Release with download links.
+#
+# Trigger: push a tag like v1.0.0 or manual dispatch.
+# Download URLs after release:
+#   https://github.com/GRRN-MAKER/PacificProduction/releases/latest/download/Pacific-CLI-1.0.0-macOS.dmg
+#   https://github.com/GRRN-MAKER/PacificProduction/releases/latest/download/Pacific-CLI-1.0.0-Windows.exe
+
+name: "🌊 Build & Release Pacific CLI"
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version (e.g. 1.0.0)"
+        required: false
+        default: "1.0.0"
+
+env:
+  VERSION: ${{ github.event.inputs.version || '1.0.0' }}
+
+jobs:
+  # ─── macOS Build ──────────────────────────────────────
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests python-dotenv pyinstaller
+
+      - name: Build pacific binary with PyInstaller
+        working-directory: cli
+        run: |
+          pip install -e .
+          pyinstaller --onefile --name pacific --console --collect-all pacific_cli pacific_cli/__main__.py
+
+      - name: Verify binary
+        working-directory: cli
+        run: |
+          ls -lh dist/pacific
+          file dist/pacific
+          ./dist/pacific --help || true
+
+      - name: Create DMG
+        working-directory: cli
+        run: |
+          mkdir -p dmg_contents
+          cp dist/pacific dmg_contents/
+
+          # Create install script
+          cat > dmg_contents/install.command << 'INSTALL_SCRIPT'
+          #!/bin/bash
+          # 🌊 Pacific CLI Installer
+          echo ""
+          echo "🌊 Pacific CLI — Installing..."
+          echo ""
+
+          SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+          INSTALL_DIR="/usr/local/bin"
+
+          # Copy binary
+          sudo cp "$SCRIPT_DIR/pacific" "$INSTALL_DIR/pacific"
+          sudo chmod +x "$INSTALL_DIR/pacific"
+
+          echo "✅ Pacific CLI installed to $INSTALL_DIR/pacific"
+          echo ""
+          echo "Get started:"
+          echo "  pacific --help"
+          echo "  pacific register"
+          echo "  pacific chat"
+          echo ""
+          INSTALL_SCRIPT
+          chmod +x dmg_contents/install.command
+
+          # Create the DMG
+          hdiutil create -volname "Pacific CLI" \
+            -srcfolder dmg_contents \
+            -ov -format UDZO \
+            "Pacific-CLI-${{ env.VERSION }}-macOS.dmg"
+
+          ls -lh "Pacific-CLI-${{ env.VERSION }}-macOS.dmg"
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pacific-macos-dmg
+          path: cli/Pacific-CLI-${{ env.VERSION }}-macOS.dmg
+          retention-days: 90
+
+  # ─── Windows Build ────────────────────────────────────
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests python-dotenv pyinstaller
+        shell: cmd
+
+      - name: Build pacific.exe with PyInstaller
+        working-directory: cli
+        run: |
+          pip install -e .
+          pyinstaller --onefile --name pacific --console --collect-all pacific_cli entry.py
+        shell: cmd
+
+      - name: Verify executable
+        working-directory: cli
+        run: |
+          dir dist\pacific.exe
+          dist\pacific.exe --help || exit 0
+        shell: cmd
+
+      - name: Rename for release
+        working-directory: cli
+        run: |
+          copy dist\pacific.exe "dist\Pacific-CLI-${{ env.VERSION }}-Windows.exe"
+        shell: cmd
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pacific-windows-exe
+          path: cli/dist/Pacific-CLI-${{ env.VERSION }}-Windows.exe
+          retention-days: 90
+
+  # ─── Create GitHub Release ────────────────────────────
+  release:
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: pacific-macos-dmg
+          path: ./release-assets
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: pacific-windows-exe
+          path: ./release-assets
+
+      - name: List release assets
+        run: ls -lh release-assets/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VERSION }}
+          name: "🌊 Pacific CLI v${{ env.VERSION }}"
+          body: |
+            ## 🌊 Pacific CLI v${{ env.VERSION }}
+
+            **Elite Quantitative Financial AI — Wall Street–grade intelligence in your terminal.**
+
+            ### Downloads
+            | Platform | File | Requirements |
+            |----------|------|-------------|
+            | **macOS** | `Pacific-CLI-${{ env.VERSION }}-macOS.dmg` | macOS 12 (Monterey) or later |
+            | **Windows** | `Pacific-CLI-${{ env.VERSION }}-Windows.exe` | Windows 10/11 |
+
+            ### Quick Start
+            ```bash
+            pacific register        # Create account
+            pacific login           # Sign in
+            pacific chat --think    # AI chat with reasoning
+            pacific quote AAPL      # Stock quotes
+            pacific chart NVDA 3mo  # Candlestick charts
+            ```
+
+            ### What's New
+            - 22 CLI commands + 15 in-chat slash commands
+            - Deep thinking mode with live reasoning
+            - Real-time market data & charting
+            - PDF, Excel, JSON export
+            - Image/chart analysis
+
+            ---
+            *Powered by GRRN · [pacific.grrn.io](https://pacific.grrn.io)*
+          draft: false
+          prerelease: false
+          files: |
+            release-assets/Pacific-CLI-${{ env.VERSION }}-macOS.dmg
+            release-assets/Pacific-CLI-${{ env.VERSION }}-Windows.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
