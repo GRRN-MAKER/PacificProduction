@@ -60,20 +60,27 @@ jobs:
       - name: Free disk space
         run: |
           echo "Before cleanup:"
-          df -h /
-          # Remove large unneeded tools to free space for DMG creation
+          df -h / && df -h /tmp || true
+          # Remove large unneeded tools
           sudo rm -rf /Users/runner/hostedtoolcache/CodeQL || true
           sudo rm -rf /Users/runner/hostedtoolcache/go || true
           sudo rm -rf /Users/runner/hostedtoolcache/Ruby || true
           sudo rm -rf /Users/runner/hostedtoolcache/node || true
+          sudo rm -rf /Users/runner/Library/Android || true
+          sudo rm -rf /opt/homebrew/Cellar || true
           # Clean PyInstaller build artifacts (keep dist/)
           rm -rf cli/build || true
           echo "After cleanup:"
-          df -h /
+          df -h / && df -h /tmp || true
 
       - name: Create DMG
         working-directory: cli
         run: |
+          # Check binary size
+          ls -lh dist/pacific
+          BINARY_SIZE=$(stat -f%z dist/pacific)
+          echo "Binary size: $BINARY_SIZE bytes"
+
           mkdir -p dmg_contents
           cp dist/pacific dmg_contents/
 
@@ -102,10 +109,19 @@ jobs:
           INSTALL_SCRIPT
           chmod +x dmg_contents/install.command
 
-          # Create the DMG
+          # Use TMPDIR on the same filesystem to avoid cross-volume space issues
+          export TMPDIR="${RUNNER_TEMP:-/tmp}"
+          echo "TMPDIR=$TMPDIR"
+
+          # Create the DMG with explicit size (binary + 10MB overhead)
+          DMG_SIZE=$(( (BINARY_SIZE / 1048576) + 20 ))m
+          echo "DMG volume size: $DMG_SIZE"
+
           hdiutil create -volname "Pacific CLI" \
             -srcfolder dmg_contents \
-            -ov -format UDZO \
+            -ov -format UDBZ \
+            -fs HFS+ \
+            -size "$DMG_SIZE" \
             "Pacific-CLI-${{ env.VERSION }}-macOS.dmg"
 
           ls -lh "Pacific-CLI-${{ env.VERSION }}-macOS.dmg"
