@@ -57,6 +57,20 @@ jobs:
           file dist/pacific
           ./dist/pacific --help || true
 
+      - name: Free disk space
+        run: |
+          echo "Before cleanup:"
+          df -h /
+          # Remove large unneeded tools to free space for DMG creation
+          sudo rm -rf /Users/runner/hostedtoolcache/CodeQL || true
+          sudo rm -rf /Users/runner/hostedtoolcache/go || true
+          sudo rm -rf /Users/runner/hostedtoolcache/Ruby || true
+          sudo rm -rf /Users/runner/hostedtoolcache/node || true
+          # Clean PyInstaller build artifacts (keep dist/)
+          rm -rf cli/build || true
+          echo "After cleanup:"
+          df -h /
+
       - name: Create DMG
         working-directory: cli
         run: |
