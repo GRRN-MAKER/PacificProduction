@@ -24,7 +24,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version override (e.g. 1.0.2.0) — leave blank to use tag"
+        description: "Version override (e.g. 1.0.2.0) - leave blank to use tag"
         required: false
         type: string
 
@@ -33,6 +33,7 @@ env:
   APP_NAME: "pacific"
   IDENTITY_NAME: "GRRN.5777388E64F5A"
   IDENTITY_PUBLISHER: "CN=6B45C4FB-290E-4232-B46B-3CE2666272FE"
+  PYTHONIOENCODING: "utf-8"
 
 jobs:
   build-msix:
@@ -61,7 +62,7 @@ jobs:
             $ver = "1.0.1.0"
           }
           echo "VERSION=$ver" >> $env:GITHUB_OUTPUT
-          echo "📌 Building version: $ver"
+          echo "Building version: $ver"
 
       # ── 3. Python setup ─────────────────────────────────────────
       - name: Set up Python ${{ env.PYTHON_VERSION }}
@@ -83,8 +84,8 @@ jobs:
       - name: Verify CLI loads
         shell: pwsh
         run: |
-          python -c "from pacific.cli import cli; cmds = list(cli.commands.keys()); print(f'✅ {len(cmds)} commands: {cmds}')"
-          python -c "from pacific.store_license import STORE_APP_ID, STORE_PFN; print(f'✅ Store ID: {STORE_APP_ID}, PFN: {STORE_PFN}')"
+          python -c "from pacific.cli import cli; cmds = list(cli.commands.keys()); print(f'OK - {len(cmds)} commands: {cmds}')"
+          python -c "from pacific.store_license import STORE_APP_ID, STORE_PFN; print(f'OK - Store ID: {STORE_APP_ID}, PFN: {STORE_PFN}')"
 
       # ── 5. Obfuscate source ──────────────────────────────────────
       - name: Obfuscate source code
@@ -102,7 +103,7 @@ jobs:
           # Verify the obfuscated code still loads
           $env:PYTHONPATH = $staging
           python -c "import importlib.util; spec = importlib.util.spec_from_file_location('pacific.cli', '$staging/pacific/cli.py'); mod = importlib.util.module_from_spec(spec)"
-          Write-Host "✅ Obfuscated source verified"
+          Write-Host "OK - Obfuscated source verified"
 
       # ── 6. Build EXE ────────────────────────────────────────────
       - name: Build pacific.exe with PyInstaller
@@ -120,11 +121,11 @@ jobs:
           
           # Verify
           if (!(Test-Path "dist\pacific.exe")) {
-            Write-Error "❌ pacific.exe not found in dist\"
+            Write-Error "pacific.exe not found in dist"
             exit 1
           }
           $size = (Get-Item "dist\pacific.exe").Length / 1MB
-          Write-Host "✅ dist\pacific.exe ($([math]::Round($size, 1)) MB)"
+          Write-Host "OK - dist\pacific.exe ($([math]::Round($size, 1)) MB)"
           
           # Smoke test
           & dist\pacific.exe --version
@@ -150,12 +151,12 @@ jobs:
           if (Test-Path "assets") {
             Copy-Item "assets\*" "$layout\assets\" -Recurse -Force
           } else {
-            Write-Host "⚠️ No assets/ dir — generating placeholder PNGs"
+            Write-Host "WARNING: No assets/ dir - generating placeholder PNGs"
             # Generate minimal valid PNGs for each required size
             python build/generate_store_assets.py "$layout\assets"
           }
           
-          Write-Host "📁 MSIX layout:"
+          Write-Host "MSIX layout:"
           Get-ChildItem $layout -Recurse | ForEach-Object {
             Write-Host "  $($_.FullName.Replace((Get-Location).Path + '\build\msix_layout\', ''))"
           }
@@ -171,7 +172,7 @@ jobs:
           $sdkPath = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\makeappx.exe" -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1
           
           if (!$sdkPath) {
-            Write-Error "❌ makeappx.exe not found. Windows SDK required."
+            Write-Error "makeappx.exe not found. Windows SDK required."
             exit 1
           }
           
@@ -180,12 +181,12 @@ jobs:
           & $sdkPath.FullName pack /d $layout /p "dist\$msixName" /o
           
           if (!(Test-Path "dist\$msixName")) {
-            Write-Error "❌ MSIX build failed"
+            Write-Error "MSIX build failed"
             exit 1
           }
           
           $size = (Get-Item "dist\$msixName").Length / 1MB
-          Write-Host "✅ dist\$msixName ($([math]::Round($size, 1)) MB)"
+          Write-Host "OK - dist\$msixName ($([math]::Round($size, 1)) MB)"
           
           echo "MSIX_NAME=$msixName" >> $env:GITHUB_OUTPUT
         id: msix
@@ -210,22 +211,22 @@ jobs:
         shell: pwsh
         run: |
           Write-Host ""
-          Write-Host "═══════════════════════════════════════════════════"
-          Write-Host "  🌊 PACIFIC CLI — MSIX Build Complete"
-          Write-Host "═══════════════════════════════════════════════════"
+          Write-Host "===================================================="
+          Write-Host "  PACIFIC CLI - MSIX Build Complete"
+          Write-Host "===================================================="
           Write-Host ""
           Write-Host "  Version:    ${{ steps.version.outputs.VERSION }}"
           Write-Host "  Store ID:   9NMR6VG01Q0B"
           Write-Host "  PFN:        GRRN.5777388E64F5A_sb6f4xrssv4qr"
           Write-Host ""
           Write-Host "  Artifacts:"
-          Write-Host "    📦 ${{ steps.msix.outputs.MSIX_NAME }}"
-          Write-Host "    🖥️  pacific.exe"
+          Write-Host "    MSIX: ${{ steps.msix.outputs.MSIX_NAME }}"
+          Write-Host "    EXE:  pacific.exe"
           Write-Host ""
           Write-Host "  Next steps:"
           Write-Host "    1. Download MSIX from Actions artifacts"
           Write-Host "    2. Go to https://partner.microsoft.com"
-          Write-Host "    3. Select Pacific → Packages → Upload MSIX"
+          Write-Host "    3. Select Pacific > Packages > Upload MSIX"
           Write-Host "    4. Submit for certification"
           Write-Host ""
-          Write-Host "═══════════════════════════════════════════════════"
+          Write-Host "===================================================="
