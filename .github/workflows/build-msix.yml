@@ -116,8 +116,7 @@ jobs:
             --distpath dist\ `
             --workpath build\temp\ `
             --clean `
-            --noconfirm `
-            --paths "$staging"
+            --noconfirm
           
           # Verify
           if (!(Test-Path "dist\pacific.exe")) {
