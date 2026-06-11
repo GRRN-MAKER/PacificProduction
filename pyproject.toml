@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pacific-cli"
+version = "1.0.0"
+description = "PACIFIC — Elite Financial Intelligence CLI powered by GRRN"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "Proprietary"}
+authors = [{name = "GRRN"}]
+
+dependencies = [
+    "click>=8.1",
+    "rich>=13.0",
+    "requests>=2.31",
+    "yfinance>=0.2.30",
+    "mplfinance>=0.12",
+    "matplotlib>=3.8",
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "openpyxl>=3.1",
+    "fpdf2>=2.7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "ruff>=0.1",
+]
+ml = [
+    "scikit-learn>=1.3",
+    "scipy>=1.11",
+    "statsmodels>=0.14",
+]
+full = [
+    "pacific-cli[ml]",
+    "plotly>=5.18",
+    "kaleido>=0.2",
+]
+# Windows Store billing — only needed for MSIX builds
+winstore = [
+    "winrt-runtime>=2.0",
+    "winrt-Windows.Services.Store>=2.0",
+    "winrt-Windows.ApplicationModel>=2.0",
+    "winrt-Windows.Foundation>=2.0",
+]
+
+[project.scripts]
+pacific = "pacific.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["pacific*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

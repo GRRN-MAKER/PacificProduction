@@ -1,0 +1,231 @@
+# ═══════════════════════════════════════════════════════════════════
+#  🌊 PACIFIC CLI — Windows Store MSIX Build
+#
+#  Builds pacific.exe via PyInstaller, then packages it into an
+#  MSIX file signed with your Store identity for Partner Center
+#  submission.
+#
+#  Trigger: push tag v* OR manual dispatch
+#  Output:  MSIX artifact downloadable from Actions → submit to
+#           Partner Center at https://partner.microsoft.com
+#
+#  Store Identity:
+#    Name:       GRRN.5777388E64F5A
+#    Publisher:   CN=6B45C4FB-290E-4232-B46B-3CE2666272FE
+#    Store ID:    9NMR6VG01Q0B
+#    PFN:         GRRN.5777388E64F5A_sb6f4xrssv4qr
+# ═══════════════════════════════════════════════════════════════════
+
+name: Build Windows MSIX
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version override (e.g. 1.0.2.0) — leave blank to use tag"
+        required: false
+        type: string
+
+env:
+  PYTHON_VERSION: "3.11"
+  APP_NAME: "pacific"
+  IDENTITY_NAME: "GRRN.5777388E64F5A"
+  IDENTITY_PUBLISHER: "CN=6B45C4FB-290E-4232-B46B-3CE2666272FE"
+
+jobs:
+  build-msix:
+    name: Build MSIX Package
+    runs-on: windows-latest
+
+    steps:
+      # ── 1. Checkout ─────────────────────────────────────────────
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      # ── 2. Determine version ────────────────────────────────────
+      - name: Set version
+        id: version
+        shell: pwsh
+        run: |
+          if ("${{ github.event.inputs.version }}") {
+            $ver = "${{ github.event.inputs.version }}"
+          } elseif ("${{ github.ref_name }}".StartsWith("v")) {
+            $tag = "${{ github.ref_name }}".TrimStart("v")
+            # Ensure 4-part version: 1.0.1 → 1.0.1.0
+            $parts = $tag.Split(".")
+            while ($parts.Count -lt 4) { $parts += "0" }
+            $ver = $parts -join "."
+          } else {
+            $ver = "1.0.1.0"
+          }
+          echo "VERSION=$ver" >> $env:GITHUB_OUTPUT
+          echo "📌 Building version: $ver"
+
+      # ── 3. Python setup ─────────────────────────────────────────
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          # Install the package itself + all dependencies
+          pip install -e ".[winstore]"
+          # PyInstaller for building the exe
+          pip install pyinstaller
+
+      # ── 4. Verify source ────────────────────────────────────────
+      - name: Verify CLI loads
+        shell: pwsh
+        run: |
+          python -c "from pacific.cli import cli; cmds = list(cli.commands.keys()); print(f'✅ {len(cmds)} commands: {cmds}')"
+          python -c "from pacific.store_license import STORE_APP_ID, STORE_PFN; print(f'✅ Store ID: {STORE_APP_ID}, PFN: {STORE_PFN}')"
+
+      # ── 5. Obfuscate source ──────────────────────────────────────
+      - name: Obfuscate source code
+        shell: pwsh
+        run: |
+          # Copy source to staging area for obfuscation (never modify originals)
+          $staging = "build\obfuscated_staging"
+          if (Test-Path $staging) { Remove-Item $staging -Recurse -Force }
+          Copy-Item -Path "pacific" -Destination "$staging\pacific" -Recurse
+          Copy-Item -Path "pacific_app.py" -Destination "$staging\pacific_app.py"
+          
+          # Run the obfuscation pipeline
+          python build/obfuscate.py "$staging\pacific"
+          
+          # Verify the obfuscated code still loads
+          $env:PYTHONPATH = $staging
+          python -c "import importlib.util; spec = importlib.util.spec_from_file_location('pacific.cli', '$staging/pacific/cli.py'); mod = importlib.util.module_from_spec(spec)"
+          Write-Host "✅ Obfuscated source verified"
+
+      # ── 6. Build EXE ────────────────────────────────────────────
+      - name: Build pacific.exe with PyInstaller
+        shell: pwsh
+        run: |
+          # Point PyInstaller at the OBFUSCATED source
+          $staging = "build\obfuscated_staging"
+          
+          pyinstaller build/pacific_windows.spec `
+            --distpath dist\ `
+            --workpath build\temp\ `
+            --clean `
+            --noconfirm `
+            --paths "$staging"
+          
+          # Verify
+          if (!(Test-Path "dist\pacific.exe")) {
+            Write-Error "❌ pacific.exe not found in dist\"
+            exit 1
+          }
+          $size = (Get-Item "dist\pacific.exe").Length / 1MB
+          Write-Host "✅ dist\pacific.exe ($([math]::Round($size, 1)) MB)"
+          
+          # Smoke test
+          & dist\pacific.exe --version
+          & dist\pacific.exe --help | Select-Object -First 5
+
+      # ── 7. Prepare MSIX layout ─────────────────────────────────
+      - name: Prepare MSIX layout
+        shell: pwsh
+        run: |
+          $layout = "build\msix_layout"
+          New-Item -ItemType Directory -Path $layout -Force | Out-Null
+          
+          # Copy the exe
+          Copy-Item "dist\pacific.exe" "$layout\"
+          
+          # Copy AppxManifest with version stamp
+          $manifest = Get-Content "AppxManifest.xml" -Raw
+          $manifest = $manifest -replace 'Version="[^"]*"', "Version=`"${{ steps.version.outputs.VERSION }}`""
+          Set-Content "$layout\AppxManifest.xml" $manifest
+          
+          # Copy assets (create placeholders if missing)
+          New-Item -ItemType Directory -Path "$layout\assets" -Force | Out-Null
+          if (Test-Path "assets") {
+            Copy-Item "assets\*" "$layout\assets\" -Recurse -Force
+          } else {
+            Write-Host "⚠️ No assets/ dir — generating placeholder PNGs"
+            # Generate minimal valid PNGs for each required size
+            python build/generate_store_assets.py "$layout\assets"
+          }
+          
+          Write-Host "📁 MSIX layout:"
+          Get-ChildItem $layout -Recurse | ForEach-Object {
+            Write-Host "  $($_.FullName.Replace((Get-Location).Path + '\build\msix_layout\', ''))"
+          }
+
+      # ── 8. Build MSIX ──────────────────────────────────────
+      - name: Build MSIX package
+        shell: pwsh
+        run: |
+          $layout = "build\msix_layout"
+          $msixName = "Pacific-${{ steps.version.outputs.VERSION }}-x64.msix"
+          
+          # Use makeappx from Windows SDK
+          $sdkPath = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\makeappx.exe" -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1
+          
+          if (!$sdkPath) {
+            Write-Error "❌ makeappx.exe not found. Windows SDK required."
+            exit 1
+          }
+          
+          Write-Host "Using: $($sdkPath.FullName)"
+          
+          & $sdkPath.FullName pack /d $layout /p "dist\$msixName" /o
+          
+          if (!(Test-Path "dist\$msixName")) {
+            Write-Error "❌ MSIX build failed"
+            exit 1
+          }
+          
+          $size = (Get-Item "dist\$msixName").Length / 1MB
+          Write-Host "✅ dist\$msixName ($([math]::Round($size, 1)) MB)"
+          
+          echo "MSIX_NAME=$msixName" >> $env:GITHUB_OUTPUT
+        id: msix
+
+      # ── 9. Upload artifacts ─────────────────────────────────
+      - name: Upload MSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pacific-msix-${{ steps.version.outputs.VERSION }}
+          path: dist/*.msix
+          if-no-files-found: error
+
+      - name: Upload EXE artifact (standalone)
+        uses: actions/upload-artifact@v4
+        with:
+          name: pacific-exe-${{ steps.version.outputs.VERSION }}
+          path: dist/pacific.exe
+          if-no-files-found: error
+
+      # ── 10. Summary ────────────────────────────────────────
+      - name: Build summary
+        shell: pwsh
+        run: |
+          Write-Host ""
+          Write-Host "═══════════════════════════════════════════════════"
+          Write-Host "  🌊 PACIFIC CLI — MSIX Build Complete"
+          Write-Host "═══════════════════════════════════════════════════"
+          Write-Host ""
+          Write-Host "  Version:    ${{ steps.version.outputs.VERSION }}"
+          Write-Host "  Store ID:   9NMR6VG01Q0B"
+          Write-Host "  PFN:        GRRN.5777388E64F5A_sb6f4xrssv4qr"
+          Write-Host ""
+          Write-Host "  Artifacts:"
+          Write-Host "    📦 ${{ steps.msix.outputs.MSIX_NAME }}"
+          Write-Host "    🖥️  pacific.exe"
+          Write-Host ""
+          Write-Host "  Next steps:"
+          Write-Host "    1. Download MSIX from Actions artifacts"
+          Write-Host "    2. Go to https://partner.microsoft.com"
+          Write-Host "    3. Select Pacific → Packages → Upload MSIX"
+          Write-Host "    4. Submit for certification"
+          Write-Host ""
+          Write-Host "═══════════════════════════════════════════════════"

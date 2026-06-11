@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  🌊 Pacific CLI — MSIX Package Manifest
+  
+  This manifest is used for the Windows Store (MSIX) build.
+  Microsoft Store subscription billing is enforced via
+  Windows.Services.Store APIs — no Stripe/PayPal in this build.
+  
+  Store Identity:
+    Package/Identity/Name:           GRRN.5777388E64F5A
+    Package/Identity/Publisher:      CN=6B45C4FB-290E-4232-B46B-3CE2666272FE
+    Package/Properties/PublisherDisplayName: GRRN
+
+  Calculated forms:
+    Package Family Name (PFN):      GRRN.5777388E64F5A_sb6f4xrssv4qr
+    Package SID:                     S-1-15-2-1969302025-2603506272-201964528-1659907639-2394225809-2543558335-3452666749
+
+  Store links:
+    Store URL:                       https://apps.microsoft.com/detail/9NMR6VG01Q0B
+    Store ID:                        9NMR6VG01Q0B
+    Store protocol link:             ms-windows-store://pdp/?productid=9NMR6VG01Q0B
+
+  MSA App:
+    MSA App ID:                      ba02d693-bcac-43fe-8c11-470983bb25f4
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
+  xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap uap3 desktop rescap">
+
+  <Identity
+    Name="GRRN.5777388E64F5A"
+    Publisher="CN=6B45C4FB-290E-4232-B46B-3CE2666272FE"
+    Version="1.0.1.0"
+    ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>Pacific — Elite Financial Intelligence</DisplayName>
+    <PublisherDisplayName>GRRN</PublisherDisplayName>
+    <Logo>assets\StoreLogo.png</Logo>
+    <Description>Wall Street–grade quantitative AI in your terminal. Real-time market data, charts, analysis, and more.</Description>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.22621.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+
+  <Applications>
+    <Application Id="PacificCLI"
+      Executable="pacific.exe"
+      EntryPoint="Windows.FullTrustApplication">
+
+      <uap:VisualElements
+        DisplayName="Pacific"
+        Description="Elite Financial Intelligence CLI powered by GRRN"
+        BackgroundColor="#1B4F72"
+        Square150x150Logo="assets\Square150x150Logo.png"
+        Square44x44Logo="assets\Square44x44Logo.png">
+        <uap:DefaultTile
+          Wide310x150Logo="assets\Wide310x150Logo.png"
+          Square310x310Logo="assets\Square310x310Logo.png"
+          ShortName="Pacific" />
+        <uap:SplashScreen Image="assets\SplashScreen.png" BackgroundColor="#1B4F72" />
+      </uap:VisualElements>
+
+      <!-- Console execution alias: users type "pacific" in any terminal -->
+      <Extensions>
+        <uap3:Extension Category="windows.appExecutionAlias">
+          <uap3:AppExecutionAlias>
+            <desktop:ExecutionAlias Alias="pacific.exe" />
+          </uap3:AppExecutionAlias>
+        </uap3:Extension>
+      </Extensions>
+
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <!-- Internet access for API calls -->
+    <Capability Name="internetClient" />
+    <!-- Store license and in-app purchase APIs -->
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+
+</Package>
