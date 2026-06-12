@@ -140,10 +140,33 @@ jobs:
           # Copy the exe
           Copy-Item "dist\pacific.exe" "$layout\"
           
+          # ────────────────────────────────────────────────────────
           # Copy AppxManifest with version stamp
-          $manifest = Get-Content "AppxManifest.xml" -Raw
-          $manifest = $manifest -replace 'Version="[^"]*"', "Version=`"${{ steps.version.outputs.VERSION }}`""
-          Set-Content "$layout\AppxManifest.xml" $manifest
+          #
+          # IMPORTANT — Two fixes applied here:
+          #   1. Read/write with -Encoding UTF8 to avoid UTF-16LE BOM.
+          #      PowerShell Set-Content defaults to UTF-16LE which adds
+          #      a BOM (FF FE) that MakeAppx rejects as invalid XML
+          #      (the XML declares encoding="utf-8").
+          #
+          #   2. Use a targeted regex anchored to <Identity so it only
+          #      replaces the Version attribute on <Identity>, NOT the
+          #      version="1.0" in the <?xml ?> processing instruction.
+          # ────────────────────────────────────────────────────────
+          $manifest = Get-Content "AppxManifest.xml" -Raw -Encoding UTF8
+          $manifest = $manifest -replace '(<Identity[\s\S]*?)Version="[^"]*"', "`$1Version=`"${{ steps.version.outputs.VERSION }}`""
+          Set-Content "$layout\AppxManifest.xml" $manifest -Encoding UTF8 -NoNewline
+          
+          # Validate the manifest is well-formed XML before MakeAppx
+          try {
+            [xml]$check = Get-Content "$layout\AppxManifest.xml" -Raw -Encoding UTF8
+            Write-Host "OK - AppxManifest.xml is valid XML (version=$($check.Package.Identity.Version))"
+          } catch {
+            Write-Error "AppxManifest.xml is NOT valid XML: $_"
+            Write-Host "--- First 3 lines ---"
+            Get-Content "$layout\AppxManifest.xml" -TotalCount 3
+            exit 1
+          }
           
           # Copy assets (create placeholders if missing)
           New-Item -ItemType Directory -Path "$layout\assets" -Force | Out-Null
